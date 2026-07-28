@@ -2,6 +2,10 @@ import sys
 from pathlib import *
 import os
 import subprocess
+from .executable import Executable
+from .builtin import BuiltIn
+import re
+
 PATH = os.environ.get("PATH")
 
 def isExecutable(command):
@@ -81,49 +85,133 @@ def handleUnclosedQuotes(res , quotes):
     while True:
         input = input()
         
-    
+def is_valid_file_name(file):
+    pattern = r"\.[a-zA-Z0-9]+$"
+    return (" " not in file) and re.search(pattern, file)
+        
     
     
 def treatArgs(args):
 
-    res = ""
+    result = {
+        "args" : [],
+        "redirect" : {
+            "is_redirect" : False,
+            "to": ""
+        }
+    }
+    res = []
     curr = 0
-    
+    string_arg = ""
     while curr < len(args):
+        
+        
         
         match args[curr]:
             
             case "'": # get all chars inside singleQuotes
-                if curr > 0 and args[curr - 1] == " ":
-                    res+= " "
+
                 curr+=1
                 while curr < len(args) and args[curr] != "'":
                     if args[curr] == "" or args[curr] == " ":
-                        res+= " "
-                    else : res+= args[curr]
+                        string_arg+= " "
+                    else : string_arg+= args[curr]
                     curr+=1
                 curr+=1
             
-            
                 #if curr < len(args):
-                    #res = handleUnclosedQuotes(res,quotes="'")
-            case " ":
+                    #string_arg = handleUnclosedQuotes(string_arg,quotes="'")
+                    
+            case '"': # get all chars inside DoubleQuotes
+
                 curr+=1
-                continue
-            case _:
-                if curr > 0 and args[curr - 1] == " ":
-                    res+= " "
-                res+=args[curr]
+                while curr < len(args) and args[curr] != '"':
+                    if args[curr] == "" or args[curr] == " ":
+                        string_arg+= " "
+                    elif args[curr] == "\\":
+                        if curr + 1 < len(args) and (args[curr + 1] in {'"' , '\\'}):
+                            curr+=1
+                            string_arg+=args[curr]
+                    else : string_arg+= args[curr]
+                    curr+=1
                 curr+=1
                 
-    return res           
+            case "\\": # a backslah found we need to traet the next char as literal
+                next_literal = ""
+                if curr + 1 < len(args):
+                    curr+=1
+                    next_literal = args[curr]
+                    curr+=1
+                
+                string_arg+=next_literal
+            
+            case ">": #redirection
+                
+                file = ""
+                curr+=1
+                while curr < len(args):
+                    if args[curr] != " ":
+                        file+=args[curr]
+                    
+                    curr+=1
+                
+                if is_valid_file_name(file):
+                    red = {
+                        "is_redirect" : True,
+                        "to" : file
+                    }
+                    result["redirect"] = red
+                    
+                else:
+                    pass
+                        
+                        
+                
+                
+            case " ":
+                if string_arg:
+                    res.append(string_arg)
+                    string_arg=""
+                curr+=1
+                
+            case _:
     
+                string_arg+=args[curr]
+                curr+=1
     
+    if len(string_arg) > 0:
+        res.append(string_arg)
+    result["args"] = res
+    return result         
+    
+def find_blank_ind(user_command):
+    curr = 0
+
+    while curr < len(user_command):
+        c = user_command[curr]
+
+        if c in {'"', "'"}:
+            quote = c
+            curr += 1
+
+            while curr < len(user_command) and user_command[curr] != quote:
+                curr += 1
+
+            if curr < len(user_command):
+                curr += 1
+
+        elif c == " ":
+            return curr
+
+        else:
+            curr += 1
+
+    return -1
     
 
 def main():
     
-    BUILT_IN_COMMANDS = {"echo","exit","type","pwd"}
+    
     
     
     while True:
@@ -137,59 +225,65 @@ def main():
                 break
             
             case 'echo':
-                res = treatArgs(user_command[5:])
-                print(res)
+                arg_res = treatArgs(user_command[5:])
+                echo = BuiltIn('echo',arg_res.get("args"),arg_res.get("redirect"))
+                echo.run()
+                
                 
             case 'type':
-                command = user_command.split(" ")[1]  
+                arg_res = treatArgs(user_command[5:])
                 
+                type = BuiltIn('type',arg_res.get("args"),arg_res.get("redirect"))
+                type.run()
             
-                if command in BUILT_IN_COMMANDS: # check if the command is builtin command
-                    print(f'{command} is a shell builtin')
                 
-                else:
-                    command = user_command.split(" ")[1].strip()
-                    is_Exe = isExecutable(command)
-                    if is_Exe.get("is_Exe"):
-                        print(f"{command} is {is_Exe.get('full_path')}")
-                    else:
-                        print(f"{command}: not found")
             case 'pwd':
-                print(Path.cwd())
+                args = treatArgs(user_command[4:])
+                pwd = BuiltIn('pwd',extra=args.get("redirect"))
+                pwd.run()
             
             case 'cd':
-                full_command = user_command.split(" ")
-                
-                command = full_command[0]
-                arg = full_command[1]
-                
-                if arg.startswith("/"):
-                    handleAbsolutePath(arg)
-                elif arg.startswith('~'):
-                    handleHome()
-                else:# handle relative path
-                    handleRelativePath(arg)
-                    
+                res = treatArgs(user_command[3:])
+                cd = BuiltIn('cd',res.get("args"))
+                cd.run()  
             
             case _:
-                full_command = user_command.split(" ")
-                is_Exe = isExecutable(full_command[0])
+                command = ""
+                first_char = user_command[0]
+                if first_char == "'" or first_char =='"':
+                    curr = 1
+                    while curr < len(user_command) and user_command[curr] != first_char:
+                        if user_command[curr] == "\\":
+                            if curr + 1 < len(user_command):
+                                
+                                next = user_command[curr+1]
+                                
+                                if next in {"\\"}:
+                                    command+=next
+                                    curr+=2
+                                else:
+                                    command+='\\'
+                                    curr+=1
+                            
+                        else : 
+                            command+=user_command[curr]
+                            curr+=1
+                    curr+=1
+                else : 
+                    command = user_command.split(" ")[0]
+                
+                is_Exe = isExecutable(command)
                 if is_Exe.get("is_Exe"):
                     # run the program
                     
-                    command = full_command[0]
-                    args = full_command[1:]
+                    first_blank = find_blank_ind(user_command)
+                    res = treatArgs(user_command[first_blank+1:])
                     
-                    result = subprocess.run(
-                        [command] + args ,
-                        executable= is_Exe.get("full_path"),
-                        capture_output = True,
-                        text = True
-                    )
+                    exec = Executable(command,res["args"],is_Exe.get("full_path"))
+                    result = exec.run()
                     
                     sys.stdout.write(result.stdout)
-                    #print(result.stderr)
-                    #print(result.returncode)
+                    
                     
                 else:
                     print(f"{user_command}: command not found")
