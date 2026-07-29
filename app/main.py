@@ -1,10 +1,15 @@
 import sys
 from pathlib import *
 import os
-import subprocess
-from .executable import Executable
-from .builtin import BuiltIn
+from executable import Executable
+from builtin import BuiltIn
+from data_structure_alg.trie import Trie
+from data_structure_alg.LongestCommonPrefix import longest_common_prefix
 import re
+import termios
+import tty
+
+#cat /tmp/cow/mango nonexistent 1> /tmp/ant/fox.md
 
 PATH = os.environ.get("PATH")
 
@@ -29,53 +34,7 @@ def isExecutable(command):
         "command_dir" : ""
     }
     
-def handleAbsolutePath(arg):
-    
-    arg_sub_dir = arg.split('/')[1:]
-                    
-    current = '/'
-    all_dir = os.listdir(current)
-                    
-                    
-    found = True
-    for dir in arg_sub_dir:
-        candidate = os.path.join(current,dir)
-        if os.path.isdir(candidate) and (dir in all_dir):
-            current=candidate+'/'
-            all_dir = os.listdir(current)
-        elif dir not in all_dir:
-            found = False
-            print(f"cd: {arg}: No such file or directory")
-            break
-                        
-    if found:
-        os.chdir(arg)
-        
-def handleRelativePath(arg):
-    # find we need to handle ./ and ../ ./dirname = dirname
-    
-    arg_sub_dir = arg.split("/")
-    current = str(Path.cwd()) 
-    
-    for arg in arg_sub_dir:
-        
-        match arg:
-            case '.':
-                continue
-            case '..':
-                curr_arr = current.split("/")
-                curr_arr.pop()
-                current = "/".join(curr_arr)  
-            case _:# there is a named dir 
-                sub_dirs = os.listdir(current)
-                if arg in sub_dirs:
-                    current+= "/" + arg
-    
-    os.chdir(current)
-                
-def handleHome():
-    HOME = os.environ.get("HOME")
-    os.chdir(HOME)
+
     
 def handleUnclosedQuotes(res , quotes):
     # we need to listen to the user input and for the closed quotes
@@ -84,10 +43,67 @@ def handleUnclosedQuotes(res , quotes):
     
     while True:
         input = input()
-        
+
 def is_valid_file_name(file):
     pattern = r"\.[a-zA-Z0-9]+$"
     return (" " not in file) and re.search(pattern, file)
+        
+def handleRedirectOutput(args,curr,result,append=False):
+    file = ""
+    curr +=  1
+    while curr < len(args):
+        
+        if args[curr] != " ":
+            file+=args[curr]
+        elif len(file) > 0:
+
+            break
+                    
+        curr+=1
+                
+    if is_valid_file_name(file):
+        red = {
+            "type" : "output",
+            "is_redirect" : True,
+            "to" : file,
+            "append":append
+        }
+        result["redirect"]["redirect_output"] = red
+                    
+    else:
+        pass
+    
+    return curr
+
+def handleRedirectError(args,curr,result,append=False):
+    file = ""
+    curr +=  1
+    while curr < len(args):
+        
+        if args[curr] != " ":
+            file+=args[curr]
+        elif len(file) > 0:
+
+            break
+                    
+        curr+=1
+                
+    if is_valid_file_name(file):
+        red = {
+            "type" : "error",
+            "is_redirect" : True,
+            "to" : file,
+            "append":append
+        }
+        result["redirect"]["redirect_error"] = red
+                    
+    else:
+        pass
+    
+    return curr
+
+        
+
         
     
     
@@ -95,9 +111,17 @@ def treatArgs(args):
 
     result = {
         "args" : [],
-        "redirect" : {
+        "redirect":{
+        "redirect_output" : {
+            "type": "output",
             "is_redirect" : False,
             "to": ""
+        },
+        "redirect_error":{
+            "type": "output",
+            "is_redirect" : False,
+            "to": ""
+        }
         }
     }
     res = []
@@ -145,25 +169,31 @@ def treatArgs(args):
                 
                 string_arg+=next_literal
             
+            case "1":
+                
+                if curr + 1 < len(args) and args[curr+1] == ">":
+                    if curr + 2 < len(args) and args[curr+2] == ">":
+                        curr = handleRedirectOutput(args,curr+2,result,append=True)
+                    else : curr = handleRedirectOutput(args,curr+1,result)
+                else:
+                    string_arg+=args[curr]
+                    curr+=1
+            
+            case "2":
+                if curr + 1 < len(args) and args[curr+1] == ">":
+                    if curr + 2 < len(args) and args[curr+2] == ">":
+                        curr = handleRedirectError(args,curr+2,result,append=True)
+                    else : curr = handleRedirectError(args,curr+1,result)
+                else:
+                    string_arg+=args[curr]
+                    curr+=1
+                    
+            
             case ">": #redirection
                 
-                file = ""
-                curr+=1
-                while curr < len(args):
-                    if args[curr] != " ":
-                        file+=args[curr]
-                    
-                    curr+=1
-                
-                if is_valid_file_name(file):
-                    red = {
-                        "is_redirect" : True,
-                        "to" : file
-                    }
-                    result["redirect"] = red
-                    
-                else:
-                    pass
+                if curr + 1 < len(args) and args[curr+1] == ">":
+                    curr = handleRedirectOutput(args,curr+1,result,append=True)
+                else : curr = handleRedirectOutput(args,curr,result)
                         
                         
                 
@@ -207,17 +237,95 @@ def find_blank_ind(user_command):
             curr += 1
 
     return -1
+
+def complete(lcp):
     
+    sys.stdout.write("\r")        # Go to start of line
+    sys.stdout.write("\033[K")    # Clear from cursor to end of line
+    sys.stdout.write("$ ")
+    sys.stdout.write(lcp)
+    sys.stdout.flush()
+    
+    
+def read_command(trie):
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+
+    user_command = ""
+
+    try:
+        tty.setraw(fd)
+
+        sys.stdout.write("$ ")
+        sys.stdout.flush()
+
+        while True:
+            c = sys.stdin.read(1)
+
+            if c == "\x03":  # Ctrl+C
+                break
+
+            if c == "\r" or c == "\n":
+                sys.stdout.write("\r\n")
+                sys.stdout.flush()
+                break
+
+            elif c == "\t":
+                if trie.startsWith(user_command):
+                    matches = trie.autoComplete(user_command)
+                    if len(matches) == 1:
+                        
+                        user_command = matches[0] + " "
+                        complete(user_command)
+                    elif len(matches) > 1:
+                        
+                        lcp = longest_common_prefix(matches)
+                        if len(lcp) > len(user_command):
+                            user_command = lcp
+                            complete(user_command)
+                    else:
+                        sys.stdout.write("\x07")
+                else:
+                    sys.stdout.write("\x07")
+
+                continue
+
+            elif c == "\x7f" or c == "\x08":
+                if len(user_command) > 0:
+                    user_command = user_command[:-1]
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+
+            
+            user_command += c
+            sys.stdout.write(c)
+            sys.stdout.flush()
+
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+    return user_command
 
 def main():
     
     
+    trie = Trie()
+    trie.insert("echo")
+    trie.insert("type")
+    trie.insert("exit")
+    trie.insert("pwd")
+    trie.insert("cd")
+    trie.insert("ls")
+    trie.insert("cat")
+    
     
     
     while True:
-        sys.stdout.write("$ ")
-        user_command = input()
-        
+
+        user_command = read_command(trie)
+        if not user_command.strip():
+            continue
         start_with = user_command.split(" ")[0]
         
         match start_with:
@@ -249,7 +357,9 @@ def main():
             
             case _:
                 command = ""
+                
                 first_char = user_command[0]
+                
                 if first_char == "'" or first_char =='"':
                     curr = 1
                     while curr < len(user_command) and user_command[curr] != first_char:
@@ -279,14 +389,17 @@ def main():
                     first_blank = find_blank_ind(user_command)
                     res = treatArgs(user_command[first_blank+1:])
                     
-                    exec = Executable(command,res["args"],is_Exe.get("full_path"))
-                    result = exec.run()
+                    exec = Executable(command,res["args"],is_Exe.get("full_path"),res.get("redirect"))
                     
-                    sys.stdout.write(result.stdout)
+                    exec.run()
+                    
+                   
                     
                     
                 else:
                     print(f"{user_command}: command not found")
+    
+
         
         
     

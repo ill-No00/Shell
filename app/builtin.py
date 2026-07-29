@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 
-#extra will contain any redirection
+
 
 class BuiltIn:
     
@@ -19,27 +19,43 @@ class BuiltIn:
         
     def run(self):
         
+        redirect_out = self.extra.get("redirect_output")
+        redirect_err = self.extra.get("redirect_error")
+        
         match self.name:
             
             case "echo":
                 
-                if len(self.extra.keys()) > 0 and self.extra.get("is_redirect"):
-                    self.redirectOut()
+                if redirect_out.get("is_redirect"):
+                    self.redirectOut(text=" ".join(self.args),source=redirect_out)
                 else :
                     print(" ".join(self.args))
+                
+                if redirect_err.get("is_redirect"):
+                    self.redirectOut(source=redirect_err,text="")
             
             case "type":
                 command = self.args[0]
                 
-                if command in self.BUILT_IN_COMMANDS: # check if the command is builtin command
-                    self.redirectOut(f'{command} is a shell builtin')
+                if command in self.BUILT_IN_COMMANDS:# check if the command is builtin command
+                    if redirect_out.get("is_redirect"):
+                        self.redirectOut(redirect_out,f'{command} is a shell builtin')
+                    else:
+                        print(f'{command} is a shell builtin',flush=True)
                                 
                 else:
                     is_Exe = self.isExecutable(command)
                     if is_Exe.get("is_Exe"):
-                        self.redirectOut(f"{command} is {is_Exe.get('full_path')}")
+                        if redirect_out.get("is_redirect") :
+                            self.redirectOut(redirect_out,f"{command} is {is_Exe.get('full_path')}")
+                        else:
+                            print(f"{command} is {is_Exe.get('full_path')}" , flush=True)
                     else:
-                        self.redirectOut(f"{command}: not found")
+                        if redirect_err.get("is_redirect"):
+                            self.redirectOut(redirect_err,f"{command}: not found")
+                        else:
+                            
+                            print(f"{command}: not found" , flush=True)
             case "pwd":
                 print(str(Path.cwd()))
                 
@@ -51,14 +67,14 @@ class BuiltIn:
                 else:# handle relative path
                     self.handleRelativePath(self.args[0])
     
-    def redirectOut(self,text):
+    def redirectOut(self,source,text):
         
         match self.name:
             case "echo":
-                with open(self.extra.get("to") , "w") as f:
-                    f.write(" ".join(self.args))
+                with open(source.get("to") , "a" if source.get("append") else "w" ) as f:
+                    f.write(text + "\n" if len(text) > 0 else "")
             case "type":
-                with open(self.extra.get("to") , "w") as f:
+                with open(source.get("to") , "a" if source.get("append") else "w") as f:
                     f.write(text)
     
     def isExecutable(self,command):
@@ -126,6 +142,6 @@ class BuiltIn:
         
         os.chdir(current)
                     
-    def handleHome():
+    def handleHome(self):
         HOME = os.environ.get("HOME")
         os.chdir(HOME)
