@@ -8,6 +8,7 @@ from data_structure_alg.LongestCommonPrefix import longest_common_prefix
 import re
 import termios
 import tty
+import subprocess
 
 #cat /tmp/cow/mango nonexistent 1> /tmp/ant/fox.md
 
@@ -239,19 +240,39 @@ def find_blank_ind(user_command):
     return -1
 
 def complete(lcp):
-    
-    sys.stdout.write("\r")        # Go to start of line
-    sys.stdout.write("\033[K")    # Clear from cursor to end of line
+    n = len(lcp) + 2
+    sys.stdout.write("\r")
+    sys.stdout.write("\033[K")
     sys.stdout.write("$ ")
     sys.stdout.write(lcp)
+    #sys.stdout.write("\r")
+    #sys.stdout.write(f"\033[{n}C")
     sys.stdout.flush()
     
+def run_completer_script(script,command):
     
-def read_command(trie):
+    result = subprocess.run(
+        [script],
+        capture_output=True,
+        text=True
+    )
+    if result.stdout:
+        completion = result.stdout.rstrip("\n")
+        complete(command + " " +completion+ " ")
+    else:
+        sys.stdout.write("\x07")
+        return
+
+def is_registered_completion(reg_comp,command):
+    return command in reg_comp
+    
+    
+def read_command(command_trie,files_trie):
     fd = sys.stdin.fileno()
     old_settings = termios.tcgetattr(fd)
 
     user_command = ""
+    tab_count = 0
 
     try:
         tty.setraw(fd)
@@ -262,35 +283,106 @@ def read_command(trie):
         while True:
             c = sys.stdin.read(1)
 
-            if c == "\x03":  # Ctrl+C
+            if c == "\x03":
+                tab_count=0# Ctrl+C
                 break
 
             if c == "\r" or c == "\n":
+                tab_count=0
                 sys.stdout.write("\r\n")
                 sys.stdout.flush()
                 break
-
             elif c == "\t":
-                if trie.startsWith(user_command):
-                    matches = trie.autoComplete(user_command)
-                    if len(matches) == 1:
-                        
-                        user_command = matches[0] + " "
-                        complete(user_command)
-                    elif len(matches) > 1:
-                        
-                        lcp = longest_common_prefix(matches)
-                        if len(lcp) > len(user_command):
-                            user_command = lcp
-                            complete(user_command)
-                    else:
-                        sys.stdout.write("\x07")
+                tab_count += 1
+                matches = []
+                base_prompt = ""
+                c_part = ""
+                
+                # we need to check for a registered completion
+                registered_completions = BuiltIn.REGISTERED_COMPLETIONS
+                base_command = user_command[0: user_command.find(" ") if user_command.find(" ") != -1 else len(user_command)]
+                if is_registered_completion(registered_completions, base_command) :
+                    command_comp = registered_completions.get(base_command)
+                    run_completer_script(command_comp.get('path') , base_command)
                 else:
                     sys.stdout.write("\x07")
+
+                # 1. Parse current word vs base command
+                if " " in user_command:
+                    # Completing an argument -> search files ONLY
+                    base_prompt, c_part = user_command.rsplit(" ", 1)
+                    base_prompt += " "
+
+                    if "/" in c_part:
+                        # Completing a path
+                        directory, _ = c_part.rsplit("/", 1)
+                        files_trie.add_full_path_recursive(directory)
+                        matches = files_trie.autoComplete(c_part)
+                    else:
+                        # Completing relative file/directory in CWD
+                        matches = files_trie.autoComplete(c_part)
+
+                else:
+                    # Completing an executable command -> search commands AND files
+                    base_prompt = ""
+                    c_part = user_command
+                    cmd_matches = command_trie.autoComplete(c_part) if command_trie.startsWith(c_part) else []
+                    file_matches = files_trie.autoComplete(c_part) if files_trie.startsWith(c_part) else []
+                    matches = sorted(list(set(cmd_matches + file_matches)))
+
+                # 2. No matches found -> Ring bell
+                if not matches:
+                    sys.stdout.write("\x07")
+                    sys.stdout.flush()
+                    continue
+
+                # 3. Single match found -> Complete it!
+                if len(matches) == 1:
+                    tab_count = 0
+                    match = matches[0]
+
+                    # Determine if the match is a directory or file
+                    if os.path.isdir(match):
+                        suffix = "/"
+                    else:
+                        suffix = " "
+
+                    user_command = base_prompt + match + suffix
+                    complete(user_command)
+
+                # 4. Multiple matches found
+                else:
+                    lcp = longest_common_prefix(matches)
+
+                    # If LCP gives extra characters, auto-complete up to LCP
+                    if len(lcp) > len(c_part):
+                        user_command = base_prompt + lcp
+                        complete(user_command)
+                        # Do NOT reset tab_count here! Keep tab_count=1 so the NEXT tab prints matches.
+                    else:
+                        # We are stuck at the common prefix. Check tab count.
+                        if tab_count == 1:
+                            sys.stdout.write("\x07")  # Ring bell on 1st tab
+                            sys.stdout.flush()
+                        elif tab_count >= 2:
+                            # Format matches for printing: append '/' if directory
+                            formatted_matches = []
+                            for item in sorted(matches):
+                                if os.path.isdir(item):
+                                    formatted_matches.append(item + "/")
+                                else:
+                                    formatted_matches.append(item)
+
+                            sys.stdout.write("\r\n")
+                            sys.stdout.write("  ".join(formatted_matches) + "\r\n")
+                            sys.stdout.write(f"$ {user_command}")
+                            sys.stdout.flush()
+                            tab_count = 0  # Reset tab count after printing list
 
                 continue
 
             elif c == "\x7f" or c == "\x08":
+                tab_count=0
                 if len(user_command) > 0:
                     user_command = user_command[:-1]
                     sys.stdout.write("\b \b")
@@ -309,21 +401,17 @@ def read_command(trie):
 
 def main():
     
-    
-    trie = Trie()
-    trie.insert("echo")
-    trie.insert("type")
-    trie.insert("exit")
-    trie.insert("pwd")
-    trie.insert("cd")
-    trie.insert("ls")
-    trie.insert("cat")
+    files_trie = Trie("file")
+    command_trie = Trie("command")
+    command_trie.initialize()
+    files_trie.initialize()
     
     
     
     while True:
 
-        user_command = read_command(trie)
+        user_command = read_command(command_trie,files_trie).strip()
+        
         if not user_command.strip():
             continue
         start_with = user_command.split(" ")[0]
@@ -353,7 +441,12 @@ def main():
             case 'cd':
                 res = treatArgs(user_command[3:])
                 cd = BuiltIn('cd',res.get("args"))
-                cd.run()  
+                cd.run() 
+            
+            case 'complete':
+                res = treatArgs(user_command[9:])
+                complete = BuiltIn('complete',res.get("args"),extra=res.get("redirect"))
+                complete.run() 
             
             case _:
                 command = ""

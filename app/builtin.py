@@ -2,6 +2,8 @@
 import os
 import sys
 from pathlib import Path
+import re
+import json
 
 
 
@@ -10,7 +12,8 @@ from pathlib import Path
 class BuiltIn:
     
     PATH = os.environ.get("PATH")
-    BUILT_IN_COMMANDS = {"echo","exit","type","pwd"}
+    BUILT_IN_COMMANDS = {"echo","exit","type","pwd","complete"}
+    REGISTERED_COMPLETIONS = {}
     
     def __init__(self , name,args=[],extra={}):
         self.name = name
@@ -66,6 +69,46 @@ class BuiltIn:
                     self.handleHome()
                 else:# handle relative path
                     self.handleRelativePath(self.args[0])
+            case 'complete':
+                flags_args ={}
+                
+                for i,arg in enumerate(self.args):
+                    if re.match(r"^--?[a-zA-Z0-9][a-zA-Z0-9-]*$", arg):
+                        if i + 1 < len(self.args):
+                            if arg in {'-c','-C'}:
+                                flags_args[arg] = {
+                                    'path' : self.args[i+1],
+                                    'command' : self.args[i+2]
+                                }
+                            else :
+                                flags_args[arg] = self.args[i+1]
+                            
+                for flag , flag_arg in flags_args.items():
+                    
+                    match flag:
+                        case '-p' | '-P':
+                            found = False
+                               
+                            if flag_arg in self.REGISTERED_COMPLETIONS:
+                                completion = self.REGISTERED_COMPLETIONS.get(flag_arg)
+                                #if flag_arg.get("path") == completion.get("path"):
+                                found = True
+                                print(f"complete -C '{completion.get('path')}' {flag_arg}")
+                                    
+                            if not found : print(f"complete: {flag_arg}: no completion specification")
+                        case '-c' | '-C':
+                            self.register_completion(flag_arg["command"],flag_arg["path"])
+                            
+                                
+    def register_completion(self,command, path):
+    
+        self.REGISTERED_COMPLETIONS[command] = {
+            "path": path
+        }
+        
+        
+
+        
     
     def redirectOut(self,source,text):
         
