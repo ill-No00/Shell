@@ -1,10 +1,10 @@
 import sys
 from pathlib import *
 import os
-from executable import Executable
-from builtin import BuiltIn
-from data_structure_alg.trie import Trie
-from data_structure_alg.LongestCommonPrefix import longest_common_prefix
+from .executable import Executable
+from .builtin import BuiltIn
+from .data_structure_alg.trie import Trie
+from .data_structure_alg.LongestCommonPrefix import longest_common_prefix
 import re
 import termios
 import tty
@@ -249,23 +249,119 @@ def complete(lcp):
     #sys.stdout.write(f"\033[{n}C")
     sys.stdout.flush()
     
-def run_completer_script(script,command):
+def run_completer_script(script,argvs , uncompleted , COMP_LINE,COMP_POINT,tab_count):
+    env = os.environ.copy()
+    env["COMP_LINE"] = COMP_LINE
+    env["COMP_POINT"] = str(COMP_POINT)
     
     result = subprocess.run(
-        [script],
+        [script] + argvs,
         capture_output=True,
-        text=True
+        text=True,
+        env=env
     )
+    
+    
     if result.stdout:
-        completion = result.stdout.rstrip("\n")
-        complete(command + " " +completion+ " ")
+        completions = result.stdout.splitlines()
+        
+        if len(completions) > 1:
+            lcp = longest_common_prefix(completions)
+       
+            #print("lcp : "  +lcp)
+            if len(lcp) > len(argvs[1]):
+                env["COMP_LINE"] = uncompleted + " " + lcp
+                env["COMP_POINT"] = len(uncompleted + " " + lcp)
+                if lcp in completions:
+                    
+                    complete(uncompleted + " " + lcp+" ")
+                else:
+                    complete(uncompleted + " " + lcp)
+                return uncompleted + " " + lcp
+            else:
+            
+                if tab_count > 1:
+                    
+                    sys.stdout.write("\r\n")
+                    sys.stdout.write("  ".join(completions) + "\r\n")
+                    sys.stdout.write(f"$ {COMP_LINE}")
+                    sys.stdout.flush()
+                    
+                else:
+                    sys.stdout.write("\x07")
+                    return "" 
+        
+        else : 
+            complete(uncompleted + " " +completions[0]+ " ")
+            return uncompleted + " " +completions[0]+ " " 
     else:
         sys.stdout.write("\x07")
-        return
+        return "" 
+
 
 def is_registered_completion(reg_comp,command):
     return command in reg_comp
     
+def programable_completion(COMP_LINE : str  ,COMP_POINT ,base_command,tab_count):
+    
+    def get_arg3():
+        
+        res = ""
+        i = len(COMP_LINE)
+        ind_blank_count=0
+        while i >= 0:
+            if ind_blank_count == 1 and COMP_LINE[i] not in {""," "}:
+                res += COMP_LINE[i]
+            elif ind_blank_count > 1:
+                break
+            elif i + 1 < len(COMP_LINE) and COMP_LINE[i] == " " and COMP_LINE[i+1] not in {""," "}:
+                ind_blank_count+=1
+            i-=1
+        
+        
+            
+        return res[::-1] 
+
+    def get_uncompleted():
+        res = ""
+        i = 0
+        
+        last_blank_seen = -1
+        while i < len(COMP_LINE):
+            if i - 1 > 0 and COMP_LINE[i] == " " and COMP_LINE[i-1] == " ":
+                
+                last_blank_seen = i
+            elif COMP_LINE[i] == " ":
+                res+=COMP_LINE[i]
+                last_blank_seen = i
+                
+            else:
+                res+=COMP_LINE[i]
+                
+            i+=1
+            
+        return res[0:last_blank_seen]
+    
+    registered_completions = BuiltIn.REGISTERED_COMPLETIONS
+    
+    base_command = COMP_LINE[0: COMP_LINE.find(" ") if COMP_LINE.find(" ") != -1 else len(COMP_LINE)]
+    args = COMP_LINE.split(" ")
+    
+    argv1 = base_command
+    argv2 = args[-1:][0]
+    argv3 = get_arg3()
+    
+    command_comp = registered_completions.get(base_command)
+    
+    uncompleted = get_uncompleted()
+    
+    res = run_completer_script(command_comp.get('path') , [argv1 , argv2 , argv3] , uncompleted , COMP_LINE,COMP_POINT , tab_count)
+    
+    if len(res) > len(COMP_LINE):
+        return res
+    else:
+        return COMP_LINE
+        
     
 def read_command(command_trie,files_trie):
     fd = sys.stdin.fileno()
@@ -273,6 +369,7 @@ def read_command(command_trie,files_trie):
 
     user_command = ""
     tab_count = 0
+    current_index = 0
 
     try:
         tty.setraw(fd)
@@ -299,11 +396,11 @@ def read_command(command_trie,files_trie):
                 c_part = ""
                 
                 # we need to check for a registered completion
-                registered_completions = BuiltIn.REGISTERED_COMPLETIONS
                 base_command = user_command[0: user_command.find(" ") if user_command.find(" ") != -1 else len(user_command)]
-                if is_registered_completion(registered_completions, base_command) :
-                    command_comp = registered_completions.get(base_command)
-                    run_completer_script(command_comp.get('path') , base_command)
+                if is_registered_completion(BuiltIn.REGISTERED_COMPLETIONS, base_command) :
+                    res = programable_completion(user_command,current_index,base_command , tab_count)
+                    user_command = res
+                    current_index = len(res)
                 else:
                     sys.stdout.write("\x07")
 
@@ -391,6 +488,7 @@ def read_command(command_trie,files_trie):
 
             
             user_command += c
+            current_index+=1
             sys.stdout.write(c)
             sys.stdout.flush()
 
