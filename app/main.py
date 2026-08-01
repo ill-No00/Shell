@@ -1,600 +1,443 @@
-import sys
-from pathlib import *
 import os
-from .executable import Executable
-from .builtin import BuiltIn
-from .data_structure_alg.trie import Trie
-from .data_structure_alg.LongestCommonPrefix import longest_common_prefix
 import re
+import subprocess
+import sys
 import termios
 import tty
-import subprocess
+from pathlib import Path
 
-#cat /tmp/cow/mango nonexistent 1> /tmp/ant/fox.md
-
-PATH = os.environ.get("PATH")
-
-def isExecutable(command):
-          
-    directories = PATH.split(":")
-                
-    for directory in directories:
-                    
-        full_path = os.path.join(directory,command)
-                    
-        if os.path.isfile(full_path) and os.access(full_path,os.X_OK):
-            
-            return {
-                "is_Exe" : True,
-                "command_dir" : directory,
-                "full_path" : full_path
-            }
-            
-    return {
-        "is_Exe" : False,
-        "command_dir" : ""
-    }
-    
-
-    
-def handleUnclosedQuotes(res , quotes):
-    # we need to listen to the user input and for the closed quotes
-    print("")
-    sys.stdout.write(">")
-    
-    while True:
-        input = input()
-
-def is_valid_file_name(file):
-    pattern = r"\.[a-zA-Z0-9]+$"
-    return (" " not in file) and re.search(pattern, file)
-        
-def handleRedirectOutput(args,curr,result,append=False):
-    file = ""
-    curr +=  1
-    while curr < len(args):
-        
-        if args[curr] != " ":
-            file+=args[curr]
-        elif len(file) > 0:
-
-            break
-                    
-        curr+=1
-                
-    if is_valid_file_name(file):
-        red = {
-            "type" : "output",
-            "is_redirect" : True,
-            "to" : file,
-            "append":append
-        }
-        result["redirect"]["redirect_output"] = red
-                    
-    else:
-        pass
-    
-    return curr
-
-def handleRedirectError(args,curr,result,append=False):
-    file = ""
-    curr +=  1
-    while curr < len(args):
-        
-        if args[curr] != " ":
-            file+=args[curr]
-        elif len(file) > 0:
-
-            break
-                    
-        curr+=1
-                
-    if is_valid_file_name(file):
-        red = {
-            "type" : "error",
-            "is_redirect" : True,
-            "to" : file,
-            "append":append
-        }
-        result["redirect"]["redirect_error"] = red
-                    
-    else:
-        pass
-    
-    return curr
-
-        
-
-        
-    
-    
-def treatArgs(args):
-
-    result = {
-        "args" : [],
-        "redirect":{
-        "redirect_output" : {
-            "type": "output",
-            "is_redirect" : False,
-            "to": ""
-        },
-        "redirect_error":{
-            "type": "output",
-            "is_redirect" : False,
-            "to": ""
-        }
-        }
-    }
-    res = []
-    curr = 0
-    string_arg = ""
-    while curr < len(args):
-        
-        
-        
-        match args[curr]:
-            
-            case "'": # get all chars inside singleQuotes
-
-                curr+=1
-                while curr < len(args) and args[curr] != "'":
-                    if args[curr] == "" or args[curr] == " ":
-                        string_arg+= " "
-                    else : string_arg+= args[curr]
-                    curr+=1
-                curr+=1
-            
-                #if curr < len(args):
-                    #string_arg = handleUnclosedQuotes(string_arg,quotes="'")
-                    
-            case '"': # get all chars inside DoubleQuotes
-
-                curr+=1
-                while curr < len(args) and args[curr] != '"':
-                    if args[curr] == "" or args[curr] == " ":
-                        string_arg+= " "
-                    elif args[curr] == "\\":
-                        if curr + 1 < len(args) and (args[curr + 1] in {'"' , '\\'}):
-                            curr+=1
-                            string_arg+=args[curr]
-                    else : string_arg+= args[curr]
-                    curr+=1
-                curr+=1
-                
-            case "\\": # a backslah found we need to traet the next char as literal
-                next_literal = ""
-                if curr + 1 < len(args):
-                    curr+=1
-                    next_literal = args[curr]
-                    curr+=1
-                
-                string_arg+=next_literal
-            
-            case "1":
-                
-                if curr + 1 < len(args) and args[curr+1] == ">":
-                    if curr + 2 < len(args) and args[curr+2] == ">":
-                        curr = handleRedirectOutput(args,curr+2,result,append=True)
-                    else : curr = handleRedirectOutput(args,curr+1,result)
-                else:
-                    string_arg+=args[curr]
-                    curr+=1
-            
-            case "2":
-                if curr + 1 < len(args) and args[curr+1] == ">":
-                    if curr + 2 < len(args) and args[curr+2] == ">":
-                        curr = handleRedirectError(args,curr+2,result,append=True)
-                    else : curr = handleRedirectError(args,curr+1,result)
-                else:
-                    string_arg+=args[curr]
-                    curr+=1
-                    
-            
-            case ">": #redirection
-                
-                if curr + 1 < len(args) and args[curr+1] == ">":
-                    curr = handleRedirectOutput(args,curr+1,result,append=True)
-                else : curr = handleRedirectOutput(args,curr,result)
-                        
-                        
-                
-                
-            case " ":
-                if string_arg:
-                    res.append(string_arg)
-                    string_arg=""
-                curr+=1
-                
-            case _:
-    
-                string_arg+=args[curr]
-                curr+=1
-    
-    if len(string_arg) > 0:
-        res.append(string_arg)
-    result["args"] = res
-    return result         
-    
-def find_blank_ind(user_command):
-    curr = 0
-
-    while curr < len(user_command):
-        c = user_command[curr]
-
-        if c in {'"', "'"}:
-            quote = c
-            curr += 1
-
-            while curr < len(user_command) and user_command[curr] != quote:
-                curr += 1
-
-            if curr < len(user_command):
-                curr += 1
-
-        elif c == " ":
-            return curr
-
-        else:
-            curr += 1
-
-    return -1
-
-def complete(lcp):
-    n = len(lcp) + 2
-    sys.stdout.write("\r")
-    sys.stdout.write("\033[K")
-    sys.stdout.write("$ ")
-    sys.stdout.write(lcp)
-    #sys.stdout.write("\r")
-    #sys.stdout.write(f"\033[{n}C")
-    sys.stdout.flush()
-    
-def run_completer_script(script,argvs , uncompleted , COMP_LINE,COMP_POINT,tab_count):
-    env = os.environ.copy()
-    env["COMP_LINE"] = COMP_LINE
-    env["COMP_POINT"] = str(COMP_POINT)
-    
-    result = subprocess.run(
-        [script] + argvs,
-        capture_output=True,
-        text=True,
-        env=env
-    )
-    
-    
-    if result.stdout:
-        completions = result.stdout.splitlines()
-        
-        if len(completions) > 1:
-            lcp = longest_common_prefix(completions)
-       
-            #print("lcp : "  +lcp)
-            if len(lcp) > len(argvs[1]):
-                env["COMP_LINE"] = uncompleted + " " + lcp
-                env["COMP_POINT"] = len(uncompleted + " " + lcp)
-                if lcp in completions:
-                    
-                    complete(uncompleted + " " + lcp+" ")
-                else:
-                    complete(uncompleted + " " + lcp)
-                return uncompleted + " " + lcp
-            else:
-            
-                if tab_count > 1:
-                    
-                    sys.stdout.write("\r\n")
-                    sys.stdout.write("  ".join(completions) + "\r\n")
-                    sys.stdout.write(f"$ {COMP_LINE}")
-                    sys.stdout.flush()
-                    
-                else:
-                    sys.stdout.write("\x07")
-                    return "" 
-        
-        else : 
-            complete(uncompleted + " " +completions[0]+ " ")
-            return uncompleted + " " +completions[0]+ " " 
-    else:
-        sys.stdout.write("\x07")
-        return "" 
+from builtin import BuiltIn
+from data_structure_alg.LongestCommonPrefix import longest_common_prefix
+from data_structure_alg.trie import Trie
+from executable import Executable
 
 
-def is_registered_completion(reg_comp,command):
-    return command in reg_comp
-    
-def programable_completion(COMP_LINE : str  ,COMP_POINT ,base_command,tab_count):
-    
-    def get_arg3():
-        
-        res = ""
-        i = len(COMP_LINE)
-        ind_blank_count=0
-        while i >= 0:
-            if ind_blank_count == 1 and COMP_LINE[i] not in {""," "}:
-                res += COMP_LINE[i]
-            elif ind_blank_count > 1:
+class Shell:
+    PATH = os.environ.get("PATH", "")
+
+    def __init__(self):
+        self.command_trie = Trie("command")
+        self.files_trie = Trie("file")
+        self.command_trie.initialize()
+        self.files_trie.initialize()
+        self.COMP_LINE = ""
+        self.CURRENT_IND = 0
+
+    def isExecutable(self, command: str) -> dict:
+        """Locates binary executables in PATH environment variable."""
+        for directory in self.PATH.split(os.pathsep):
+            full_path = os.path.join(directory, command)
+            if os.path.isfile(full_path) and os.access(full_path, os.X_OK):
+                return {
+                    "is_Exe": True,
+                    "command_dir": directory,
+                    "full_path": full_path,
+                }
+        return {"is_Exe": False, "command_dir": "", "full_path": ""}
+
+    def is_valid_file_name(self, file: str) -> bool:
+        """Validates shell redirection targets."""
+        pattern = r"\.[a-zA-Z0-9]+$"
+        return (" " not in file) and bool(re.search(pattern, file))
+
+    def _extract_redirect_target(self, args: str, curr: int) -> tuple[str, int]:
+        """Helper to safely consume non-whitespace file path tokens for redirection."""
+        file = ""
+        curr += 1
+        while curr < len(args):
+            if args[curr] != " ":
+                file += args[curr]
+            elif len(file) > 0:
                 break
-            elif i + 1 < len(COMP_LINE) and COMP_LINE[i] == " " and COMP_LINE[i+1] not in {""," "}:
-                ind_blank_count+=1
-            i-=1
-        
-        
-            
-        return res[::-1] 
+            curr += 1
+        return file, curr
 
-    def get_uncompleted():
-        res = ""
-        i = 0
-        
-        last_blank_seen = -1
-        while i < len(COMP_LINE):
-            if i - 1 > 0 and COMP_LINE[i] == " " and COMP_LINE[i-1] == " ":
-                
-                last_blank_seen = i
-            elif COMP_LINE[i] == " ":
-                res+=COMP_LINE[i]
-                last_blank_seen = i
-                
+    def handleRedirectOutput(self, args: str, curr: int, result: dict, append: bool = False) -> int:
+        file, next_curr = self._extract_redirect_target(args, curr)
+        if self.is_valid_file_name(file):
+            result["redirect"]["redirect_output"] = {
+                "type": "output",
+                "is_redirect": True,
+                "to": file,
+                "append": append,
+            }
+        return next_curr
+
+    def handleRedirectError(self, args: str, curr: int, result: dict, append: bool = False) -> int:
+        file, next_curr = self._extract_redirect_target(args, curr)
+        if self.is_valid_file_name(file):
+            result["redirect"]["redirect_error"] = {
+                "type": "error",
+                "is_redirect": True,
+                "to": file,
+                "append": append,
+            }
+        return next_curr
+
+    def treatArgs(self, args: str) -> dict:
+        """Tokenizes line input with support for quotes, escapes, and stream redirections."""
+        result = {
+            "args": [],
+            "redirect": {
+                "redirect_output": {"type": "output", "is_redirect": False, "to": ""},
+                "redirect_error": {"type": "output", "is_redirect": False, "to": ""},
+            },
+        }
+        res = []
+        curr = 0
+        string_arg = ""
+
+        while curr < len(args):
+            char = args[curr]
+            match char:
+                case "'":
+                    curr += 1
+                    while curr < len(args) and args[curr] != "'":
+                        string_arg += " " if args[curr] == "" else args[curr]
+                        curr += 1
+                    curr += 1
+
+                case '"':
+                    curr += 1
+                    while curr < len(args) and args[curr] != '"':
+                        if args[curr] == "\\":
+                            if curr + 1 < len(args) and args[curr + 1] in {'"', "\\"}:
+                                curr += 1
+                                string_arg += args[curr]
+                        else:
+                            string_arg += args[curr]
+                        curr += 1
+                    curr += 1
+
+                case "\\":
+                    if curr + 1 < len(args):
+                        curr += 1
+                        string_arg += args[curr]
+                        curr += 1
+
+                case "1":
+                    if curr + 1 < len(args) and args[curr + 1] == ">":
+                        is_append = (curr + 2 < len(args)) and (args[curr + 2] == ">")
+                        advance = curr + 2 if is_append else curr + 1
+                        curr = self.handleRedirectOutput(args, advance, result, append=is_append)
+                    else:
+                        string_arg += char
+                        curr += 1
+
+                case "2":
+                    if curr + 1 < len(args) and args[curr + 1] == ">":
+                        is_append = (curr + 2 < len(args)) and (args[curr + 2] == ">")
+                        advance = curr + 2 if is_append else curr + 1
+                        curr = self.handleRedirectError(args, advance, result, append=is_append)
+                    else:
+                        string_arg += char
+                        curr += 1
+
+                case ">":
+                    is_append = (curr + 1 < len(args)) and (args[curr + 1] == ">")
+                    advance = curr + 1 if is_append else curr
+                    curr = self.handleRedirectOutput(args, advance, result, append=is_append)
+
+                case " ":
+                    if string_arg:
+                        res.append(string_arg)
+                        string_arg = ""
+                    curr += 1
+
+                case _:
+                    string_arg += char
+                    curr += 1
+
+        if string_arg:
+            res.append(string_arg)
+
+        result["args"] = res
+        return result
+
+    def find_blank_ind(self) -> int:
+        """Finds index of the first space character outside quoted strings."""
+        curr = 0
+        while curr < len(self.COMP_LINE):
+            c = self.COMP_LINE[curr]
+            if c in {'"', "'"}:
+                quote = c
+                curr += 1
+                while curr < len(self.COMP_LINE) and self.COMP_LINE[curr] != quote:
+                    curr += 1
+                if curr < len(self.COMP_LINE):
+                    curr += 1
+            elif c == " ":
+                return curr
             else:
-                res+=COMP_LINE[i]
-                
-            i+=1
-            
-        return res[0:last_blank_seen]
-    
-    registered_completions = BuiltIn.REGISTERED_COMPLETIONS
-    
-    base_command = COMP_LINE[0: COMP_LINE.find(" ") if COMP_LINE.find(" ") != -1 else len(COMP_LINE)]
-    args = COMP_LINE.split(" ")
-    
-    argv1 = base_command
-    argv2 = args[-1:][0]
-    argv3 = get_arg3()
-    
-    command_comp = registered_completions.get(base_command)
-    
-    uncompleted = get_uncompleted()
-    
-    res = run_completer_script(command_comp.get('path') , [argv1 , argv2 , argv3] , uncompleted , COMP_LINE,COMP_POINT , tab_count)
-    
-    if len(res) > len(COMP_LINE):
-        return res
-    else:
-        return COMP_LINE
-        
-    
-def read_command(command_trie,files_trie):
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
+                curr += 1
+        return -1
 
-    user_command = ""
-    tab_count = 0
-    current_index = 0
-
-    try:
-        tty.setraw(fd)
-
-        sys.stdout.write("$ ")
+    def redraw_line(self, new_line: str):
+        """Redraws the prompt buffer atomically on terminal output."""
+        self.COMP_LINE = new_line
+        self.CURRENT_IND = len(new_line)
+        sys.stdout.write("\r\033[K$ " + self.COMP_LINE)
         sys.stdout.flush()
 
-        while True:
-            c = sys.stdin.read(1)
+    def run_completer_script(
+        self,
+        script: str,
+        argvs: list[str],
+        uncompleted: str,
+        COMP_LINE: str,
+        tab_count: int,
+    ) -> str:
+        """Executes external completion helper scripts"""
+        env = os.environ.copy()
+        env["COMP_LINE"] = COMP_LINE
+        env["COMP_POINT"] = str(self.CURRENT_IND)
 
-            if c == "\x03":
-                tab_count=0# Ctrl+C
-                break
+        try:
+            result = subprocess.run([script] + argvs, capture_output=True, text=True, env=env)
+        except Exception:
+            sys.stdout.write("\x07")
+            sys.stdout.flush()
+            return COMP_LINE
 
-            if c == "\r" or c == "\n":
-                tab_count=0
-                sys.stdout.write("\r\n")
-                sys.stdout.flush()
-                break
-            elif c == "\t":
-                tab_count += 1
-                matches = []
-                base_prompt = ""
-                c_part = ""
-                
-                # we need to check for a registered completion
-                base_command = user_command[0: user_command.find(" ") if user_command.find(" ") != -1 else len(user_command)]
-                if is_registered_completion(BuiltIn.REGISTERED_COMPLETIONS, base_command) :
-                    res = programable_completion(user_command,current_index,base_command , tab_count)
-                    user_command = res
-                    current_index = len(res)
-                else:
-                    sys.stdout.write("\x07")
+        if not result.stdout:
+            sys.stdout.write("\x07")
+            sys.stdout.flush()
+            return COMP_LINE
 
-                # 1. Parse current word vs base command
-                if " " in user_command:
-                    # Completing an argument -> search files ONLY
-                    base_prompt, c_part = user_command.rsplit(" ", 1)
-                    base_prompt += " "
+        completions = result.stdout.splitlines()
+        prefix_base = (uncompleted + " ") if uncompleted else ""
 
-                    if "/" in c_part:
-                        # Completing a path
-                        directory, _ = c_part.rsplit("/", 1)
-                        files_trie.add_full_path_recursive(directory)
-                        matches = files_trie.autoComplete(c_part)
-                    else:
-                        # Completing relative file/directory in CWD
-                        matches = files_trie.autoComplete(c_part)
+        # Single Completion Match
+        if len(completions) == 1:
+            match = completions[0]
+            completed_str = prefix_base + match + " "
+            self.redraw_line(completed_str)
+            return completed_str
 
-                else:
-                    # Completing an executable command -> search commands AND files
-                    base_prompt = ""
-                    c_part = user_command
-                    cmd_matches = command_trie.autoComplete(c_part) if command_trie.startsWith(c_part) else []
-                    file_matches = files_trie.autoComplete(c_part) if files_trie.startsWith(c_part) else []
-                    matches = sorted(list(set(cmd_matches + file_matches)))
+        # Multiple Completion Matches
+        lcp = longest_common_prefix(completions)
+        current_word = argvs[1]
 
-                # 2. No matches found -> Ring bell
-                if not matches:
-                    sys.stdout.write("\x07")
-                    sys.stdout.flush()
-                    continue
+        if len(lcp) > len(current_word):
+            # Extend partial completion up to LCP
+            suffix = " " if lcp in completions else ""
+            completed_str = prefix_base + lcp + suffix
+            self.redraw_line(completed_str)
+            return completed_str
 
-                # 3. Single match found -> Complete it!
-                if len(matches) == 1:
-                    tab_count = 0
-                    match = matches[0]
-
-                    # Determine if the match is a directory or file
-                    if os.path.isdir(match):
-                        suffix = "/"
-                    else:
-                        suffix = " "
-
-                    user_command = base_prompt + match + suffix
-                    complete(user_command)
-
-                # 4. Multiple matches found
-                else:
-                    lcp = longest_common_prefix(matches)
-
-                    # If LCP gives extra characters, auto-complete up to LCP
-                    if len(lcp) > len(c_part):
-                        user_command = base_prompt + lcp
-                        complete(user_command)
-                        # Do NOT reset tab_count here! Keep tab_count=1 so the NEXT tab prints matches.
-                    else:
-                        # We are stuck at the common prefix. Check tab count.
-                        if tab_count == 1:
-                            sys.stdout.write("\x07")  # Ring bell on 1st tab
-                            sys.stdout.flush()
-                        elif tab_count >= 2:
-                            # Format matches for printing: append '/' if directory
-                            formatted_matches = []
-                            for item in sorted(matches):
-                                if os.path.isdir(item):
-                                    formatted_matches.append(item + "/")
-                                else:
-                                    formatted_matches.append(item)
-
-                            sys.stdout.write("\r\n")
-                            sys.stdout.write("  ".join(formatted_matches) + "\r\n")
-                            sys.stdout.write(f"$ {user_command}")
-                            sys.stdout.flush()
-                            tab_count = 0  # Reset tab count after printing list
-
-                continue
-
-            elif c == "\x7f" or c == "\x08":
-                tab_count=0
-                if len(user_command) > 0:
-                    user_command = user_command[:-1]
-                    sys.stdout.write("\b \b")
-                    sys.stdout.flush()
-                continue
-
-            
-            user_command += c
-            current_index+=1
-            sys.stdout.write(c)
+        # No progress possible from LCP
+        if tab_count > 1:
+            sys.stdout.write("\r\n")
+            sys.stdout.write("  ".join(completions) + "\r\n")
+            sys.stdout.write(f"$ {COMP_LINE}")
+            sys.stdout.flush()
+        else:
+            sys.stdout.write("\x07")
             sys.stdout.flush()
 
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        return COMP_LINE
 
-    return user_command
+    def programmable_completion(self, tab_count: int) -> str:
+        """Processes completion rules registered in BuiltIn.REGISTERED_COMPLETIONS."""
+        registered_completions = BuiltIn.REGISTERED_COMPLETIONS
+        line = self.COMP_LINE
 
-def main():
-    
-    files_trie = Trie("file")
-    command_trie = Trie("command")
-    command_trie.initialize()
-    files_trie.initialize()
-    
-    
-    
-    while True:
+        parts = line.split()
+        base_command = parts[0] if parts else ""
 
-        user_command = read_command(command_trie,files_trie).strip()
-        
-        if not user_command.strip():
-            continue
-        start_with = user_command.split(" ")[0]
-        
-        match start_with:
-            case 'exit':
-                break
-            
-            case 'echo':
-                arg_res = treatArgs(user_command[5:])
-                echo = BuiltIn('echo',arg_res.get("args"),arg_res.get("redirect"))
-                echo.run()
-                
-                
-            case 'type':
-                arg_res = treatArgs(user_command[5:])
-                
-                type = BuiltIn('type',arg_res.get("args"),arg_res.get("redirect"))
-                type.run()
-            
-                
-            case 'pwd':
-                args = treatArgs(user_command[4:])
-                pwd = BuiltIn('pwd',extra=args.get("redirect"))
-                pwd.run()
-            
-            case 'cd':
-                res = treatArgs(user_command[3:])
-                cd = BuiltIn('cd',res.get("args"))
-                cd.run() 
-            
-            case 'complete':
-                res = treatArgs(user_command[9:])
-                complete = BuiltIn('complete',res.get("args"),extra=res.get("redirect"))
-                complete.run() 
-            
-            case _:
-                command = ""
-                
-                first_char = user_command[0]
-                
-                if first_char == "'" or first_char =='"':
-                    curr = 1
-                    while curr < len(user_command) and user_command[curr] != first_char:
-                        if user_command[curr] == "\\":
-                            if curr + 1 < len(user_command):
-                                
-                                next = user_command[curr+1]
-                                
-                                if next in {"\\"}:
-                                    command+=next
-                                    curr+=2
-                                else:
-                                    command+='\\'
-                                    curr+=1
-                            
-                        else : 
-                            command+=user_command[curr]
-                            curr+=1
-                    curr+=1
-                else : 
-                    command = user_command.split(" ")[0]
-                
-                is_Exe = isExecutable(command)
-                if is_Exe.get("is_Exe"):
-                    # run the program
-                    
-                    first_blank = find_blank_ind(user_command)
-                    res = treatArgs(user_command[first_blank+1:])
-                    
-                    exec = Executable(command,res["args"],is_Exe.get("full_path"),res.get("redirect"))
-                    
-                    exec.run()
-                    
-                   
-                    
-                    
-                else:
-                    print(f"{user_command}: command not found")
-    
+        command_comp = registered_completions.get(base_command)
+        if not command_comp or not command_comp.get("path"):
+            return line
 
-        
-        
-    
+        # Calculate word args for completion script: [cmd, cword, prev_word]
+        last_blank_seen = line.rfind(" ")
+        if last_blank_seen == -1:
+            uncompleted = ""
+            current_word = line
+        else:
+            uncompleted = line[:last_blank_seen]
+            current_word = line[last_blank_seen + 1 :]
+
+        words = line.split()
+        prev_word = words[-2] if len(words) >= 2 else ""
+
+        argvs = [base_command, current_word, prev_word]
+
+        return self.run_completer_script(
+            command_comp.get("path"),
+            argvs,
+            uncompleted,
+            line,
+            tab_count,
+        )
+
+    def is_registered_completion(self, command: str) -> bool:
+        return command in BuiltIn.REGISTERED_COMPLETIONS
+
+    def read_command(self, command_trie: Trie, files_trie: Trie) -> str:
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+        tab_count = 0
+
+        self.COMP_LINE = ""
+        self.CURRENT_IND = 0
+
+        try:
+            tty.setraw(fd)
+            sys.stdout.write("$ ")
+            sys.stdout.flush()
+
+            while True:
+                c = sys.stdin.read(1)
+
+                if c in ("\x03", "\r", "\n"):  # Interrupt / Newline
+                    tab_count = 0
+                    sys.stdout.write("\r\n")
+                    sys.stdout.flush()
+                    break
+
+                elif c == "\t":
+                    tab_count += 1
+                    base_command = self.COMP_LINE.split(" ")[0] if self.COMP_LINE else ""
+
+                    # 1. Check for custom Programmable Completion
+                    if self.is_registered_completion(base_command):
+                        res = self.programmable_completion(tab_count)
+                        self.COMP_LINE = res
+                        self.CURRENT_IND = len(res)
+                        continue
+
+                    #  Default Completion Pipeline
+                    matches = []
+                    base_prompt = ""
+                    c_part = ""
+
+                    if " " in self.COMP_LINE:
+                        base_prompt, c_part = self.COMP_LINE.rsplit(" ", 1)
+                        base_prompt += " "
+
+                        if "/" in c_part:
+                            directory, _ = c_part.rsplit("/", 1)
+                            files_trie.add_full_path_recursive(directory)
+                            matches = files_trie.autoComplete(c_part)
+                        else:
+                            matches = files_trie.autoComplete(c_part)
+                    else:
+                        base_prompt = ""
+                        c_part = self.COMP_LINE
+                        cmd_matches = command_trie.autoComplete(c_part) if command_trie.startsWith(c_part) else []
+                        file_matches = files_trie.autoComplete(c_part) if files_trie.startsWith(c_part) else []
+                        matches = sorted(list(set(cmd_matches + file_matches)))
+
+                    if not matches:
+                        sys.stdout.write("\x07")
+                        sys.stdout.flush()
+                        continue
+
+                    if len(matches) == 1:
+                        tab_count = 0
+                        suffix = "/" if os.path.isdir(matches[0]) else " "
+                        self.redraw_line(base_prompt + matches[0] + suffix)
+                    else:
+                        lcp = longest_common_prefix(matches)
+                        if len(lcp) > len(c_part):
+                            self.redraw_line(base_prompt + lcp)
+                        else:
+                            if tab_count == 1:
+                                sys.stdout.write("\x07")
+                                sys.stdout.flush()
+                            elif tab_count >= 2:
+                                formatted_matches = [
+                                    m + "/" if os.path.isdir(m) else m for m in sorted(matches)
+                                ]
+                                sys.stdout.write("\r\n" + "  ".join(formatted_matches) + "\r\n")
+                                sys.stdout.write(f"$ {self.COMP_LINE}")
+                                sys.stdout.flush()
+                                tab_count = 0
+                    continue
+
+                elif c in ("\x7f", "\x08"):  # Backspace
+                    tab_count = 0
+                    if len(self.COMP_LINE) > 0:
+                        self.COMP_LINE = self.COMP_LINE[:-1]
+                        self.CURRENT_IND = len(self.COMP_LINE)
+                        sys.stdout.write("\b \b")
+                        sys.stdout.flush()
+                    continue
+
+                # printable key press
+                tab_count = 0
+                self.COMP_LINE += c
+                self.CURRENT_IND = len(self.COMP_LINE)
+                sys.stdout.write(c)
+                sys.stdout.flush()
+
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+        return self.COMP_LINE.strip()
+
+    def main(self):
+        files_trie = self.files_trie
+        command_trie = self.command_trie
+
+        while True:
+            self.COMP_LINE = self.read_command(command_trie, files_trie)
+            if not self.COMP_LINE:
+                continue
+
+            start_with = self.COMP_LINE.split(" ")[0]
+
+            match start_with:
+                case "exit":
+                    break
+
+                case "echo":
+                    arg_res = self.treatArgs(self.COMP_LINE[5:])
+                    BuiltIn("echo", arg_res.get("args"), arg_res.get("redirect")).run()
+
+                case "type":
+                    arg_res = self.treatArgs(self.COMP_LINE[5:])
+                    BuiltIn("type", arg_res.get("args"), arg_res.get("redirect")).run()
+
+                case "pwd":
+                    args = self.treatArgs(self.COMP_LINE[4:])
+                    BuiltIn("pwd", extra=args.get("redirect")).run()
+
+                case "cd":
+                    res = self.treatArgs(self.COMP_LINE[3:])
+                    BuiltIn("cd", res.get("args")).run()
+
+                case "complete":
+                    res = self.treatArgs(self.COMP_LINE[9:])
+                    BuiltIn("complete", res.get("args"), extra=res.get("redirect")).run()
+
+                case _:
+                    first_blank = self.find_blank_ind()
+                    if first_blank != -1:
+                        cmd_part = self.COMP_LINE[:first_blank]
+                        args_part = self.COMP_LINE[first_blank + 1 :]
+                    else:
+                        cmd_part = self.COMP_LINE
+                        args_part = ""
+
+                    parsed_cmd = self.treatArgs(cmd_part)["args"]
+                    command = parsed_cmd[0] if parsed_cmd else cmd_part
+
+                    is_Exe = self.isExecutable(command)
+                    if is_Exe.get("is_Exe"):
+                        res = self.treatArgs(args_part)
+                        exec_item = Executable(
+                            command,
+                            res["args"],
+                            is_Exe.get("full_path"),
+                            res.get("redirect"),
+                        )
+                        exec_item.run()
+                    else:
+                        print(f"{self.COMP_LINE}: command not found")
 
 
 if __name__ == "__main__":
-    main()
+    shell = Shell()
+    shell.main()
