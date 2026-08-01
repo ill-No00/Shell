@@ -12,7 +12,7 @@ import json
 class BuiltIn:
     
     PATH = os.environ.get("PATH")
-    BUILT_IN_COMMANDS = {"echo","exit","type","pwd","complete"}
+    BUILT_IN_COMMANDS = {"echo","exit","type","pwd","complete","jobs"}
     REGISTERED_COMPLETIONS = {}
     
     def __init__(self , name,args=[],extra={}):
@@ -24,6 +24,10 @@ class BuiltIn:
         
         redirect_out = self.extra.get("redirect_output")
         redirect_err = self.extra.get("redirect_error")
+        is_background = self.args[-1] == "&"
+        
+        if is_background:
+            self.args.pop()
         
         match self.name:
             
@@ -98,6 +102,13 @@ class BuiltIn:
                             if not found : print(f"complete: {flag_arg}: no completion specification")
                         case '-c' | '-C':
                             self.register_completion(flag_arg["command"],flag_arg["path"])
+                        case '-r' | '-R':
+                            
+                            self.delete_completion(flag_arg)
+            
+            case "jobs":
+                print(f"args : {self.args}")
+                return
                             
                                 
     def register_completion(self,command, path):
@@ -105,6 +116,9 @@ class BuiltIn:
         self.REGISTERED_COMPLETIONS[command] = {
             "path": path
         }
+    
+    def delete_completion(self,command):
+        del self.REGISTERED_COMPLETIONS[command]
         
         
 

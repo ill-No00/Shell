@@ -22,6 +22,7 @@ class Shell:
         self.files_trie.initialize()
         self.COMP_LINE = ""
         self.CURRENT_IND = 0
+        self.next_bg_id = 1
 
     def isExecutable(self, command: str) -> dict:
         """Locates binary executables in PATH environment variable."""
@@ -393,24 +394,28 @@ class Shell:
                     break
 
                 case "echo":
-                    arg_res = self.treatArgs(self.COMP_LINE[5:])
-                    BuiltIn("echo", arg_res.get("args"), arg_res.get("redirect")).run()
+                    args = self.treatArgs(self.COMP_LINE[5:])
+                    BuiltIn("echo", args.get("args"), args.get("redirect")).run()
 
                 case "type":
-                    arg_res = self.treatArgs(self.COMP_LINE[5:])
-                    BuiltIn("type", arg_res.get("args"), arg_res.get("redirect")).run()
+                    args = self.treatArgs(self.COMP_LINE[5:])
+                    BuiltIn("type", args.get("args"), args.get("redirect")).run()
 
                 case "pwd":
                     args = self.treatArgs(self.COMP_LINE[4:])
                     BuiltIn("pwd", extra=args.get("redirect")).run()
 
                 case "cd":
-                    res = self.treatArgs(self.COMP_LINE[3:])
-                    BuiltIn("cd", res.get("args")).run()
+                    args = self.treatArgs(self.COMP_LINE[3:])
+                    BuiltIn("cd", args.get("args")).run()
 
                 case "complete":
-                    res = self.treatArgs(self.COMP_LINE[9:])
-                    BuiltIn("complete", res.get("args"), extra=res.get("redirect")).run()
+                    args = self.treatArgs(self.COMP_LINE[9:])
+                    BuiltIn("complete", args.get("args"), extra=args.get("redirect")).run()
+                
+                case "jobs":
+                    args = self.treatArgs(self.COMP_LINE[5:])
+                    BuiltIn("jobs",args.get("args")).run()
 
                 case _:
                     first_blank = self.find_blank_ind()
@@ -427,13 +432,19 @@ class Shell:
                     is_Exe = self.isExecutable(command)
                     if is_Exe.get("is_Exe"):
                         res = self.treatArgs(args_part)
+                        job_id = self.next_bg_id
+                        self.next_bg_id+=1
                         exec_item = Executable(
                             command,
                             res["args"],
                             is_Exe.get("full_path"),
-                            res.get("redirect"),
+                            res.get("redirect") | {"job_id": job_id},
                         )
+                        
+                                      
                         exec_item.run()
+                        
+                        
                     else:
                         print(f"{self.COMP_LINE}: command not found")
 
