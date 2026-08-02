@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 import re
 import json
+from job import jobs
 
 
 
@@ -15,6 +16,7 @@ class BuiltIn:
     BUILT_IN_COMMANDS = {"echo","exit","type","pwd","complete","jobs"}
     REGISTERED_COMPLETIONS = {}
     
+    
     def __init__(self , name,args=[],extra={}):
         self.name = name
         self.args = args
@@ -24,7 +26,7 @@ class BuiltIn:
         
         redirect_out = self.extra.get("redirect_output")
         redirect_err = self.extra.get("redirect_error")
-        is_background = self.args[-1] == "&"
+        is_background = self.args[-1] == "&" if len(self.args) > 0 else False
         
         if is_background:
             self.args.pop()
@@ -107,7 +109,23 @@ class BuiltIn:
                             self.delete_completion(flag_arg)
             
             case "jobs":
-                print(f"args : {self.args}")
+                all_jobs = jobs.get_jobs()
+                for i,job in enumerate(all_jobs):
+                    command = job.command
+                    status = "Running"
+                    is_Done = job.process.poll() is not None
+                    if is_Done:
+                        status = "Done"
+                        command = command[:-2]
+                        jobs.delete_job(job.job_number)
+                    if i== len(all_jobs) - 1:
+                        print(f"[{job.job_number}]+  {status:<24}{command}")
+                    elif i== len(all_jobs) - 2:
+                        print(f"[{job.job_number}]-  {status:<24}{command}")
+                    else:
+                        print(f"[{job.job_number}]  {status:<24}{command}")
+                    
+                    
                 return
                             
                                 

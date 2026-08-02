@@ -10,6 +10,9 @@ from builtin import BuiltIn
 from data_structure_alg.LongestCommonPrefix import longest_common_prefix
 from data_structure_alg.trie import Trie
 from executable import Executable
+from job import *
+from token_type import TokenType
+from token_t import Token
 
 
 class Shell:
@@ -76,7 +79,7 @@ class Shell:
         return next_curr
 
     def treatArgs(self, args: str) -> dict:
-        """Tokenizes line input with support for quotes, escapes, and stream redirections."""
+        """Tokenizes line input with support for quotes, escapes, stream redirections , and Pipes"""
         result = {
             "args": [],
             "redirect": {
@@ -144,6 +147,11 @@ class Shell:
                         res.append(string_arg)
                         string_arg = ""
                     curr += 1
+                
+                case "|":
+                    if curr - 1 > 0 and curr + 1 < len(args) and args[curr - 1] == " " and args[curr + 1] == " ":
+                        # create a pipe
+                        ...
 
                 case _:
                     string_arg += char
@@ -377,13 +385,161 @@ class Shell:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
         return self.COMP_LINE.strip()
+    
+    def remove_exited_jobs(self):
+        all_jobs = jobs.get_jobs()
+        for i,job in enumerate(all_jobs):
+            command = job.command
+            is_Done = job.process.poll() is not None
+            if is_Done:
+                status = "Done"
+                command = command[:-2]
+                jobs.delete_job(job.job_number)
+                if i== len(all_jobs) - 1:
+                    print(f"[{job.job_number}]+  {status:<24}{command}")
+                elif i== len(all_jobs) - 2:
+                    print(f"[{job.job_number}]-  {status:<24}{command}")
+                else:
+                    print(f"[{job.job_number}]  {status:<24}{command}")
+                    
+    def parser(self):
+        tokenized_command = []
+        command = self.COMP_LINE
+        curr = 0
+        current_str = ""  # Fixed: Moved OUTSIDE the loop
+        
+        while curr < len(command):
+            c = command[curr]
+            
+            match c:
+                case "|":
+                    if current_str:
+                        tokenized_command.append(Token(TokenType.COMMAND if not tokenized_command else TokenType.ARG, current_str))
+                        current_str = ""
+                        
+                    if curr - 1 > 0 and curr + 1 < len(command) and command[curr - 1] == " " and command[curr + 1] == " ":
+                        tokenized_command.append(Token(TokenType.PIPE, "|"))
+                    else:
+                        current_str += c
+                    curr += 1
+                        
+                case "'":
+                    if current_str:
+                        tokenized_command.append(Token(TokenType.ARG, current_str))
+                        current_str = ""
+                    curr += 1
+                    quoted = ""
+                    while curr < len(command) and command[curr] != "'":
+                        quoted += " " if command[curr] == "" else command[curr]
+                        curr += 1
+                    curr += 1  # Skip closing quote
+                    tokenized_command.append(Token(TokenType.COMMAND if not tokenized_command else TokenType.ARG, quoted))
+
+                case '"':
+                    if current_str:
+                        tokenized_command.append(Token(TokenType.ARG, current_str))
+                        current_str = ""
+                    curr += 1
+                    quoted = ""
+                    while curr < len(command) and command[curr] != '"':
+                        if command[curr] == "\\":
+                            if curr + 1 < len(command) and command[curr + 1] in {'"', "\\"}:
+                                curr += 1
+                                quoted += command[curr]
+                        else:
+                            quoted += command[curr]
+                        curr += 1
+                    curr += 1  # Skip closing quote
+                    
+                    if quoted == "\\":
+                        tokenized_command.append(Token(TokenType.ARG, quoted))
+                    else: 
+                        tokenized_command.append(Token(TokenType.COMMAND if not tokenized_command else TokenType.ARG, quoted))
+
+                case "1":
+                    if curr + 1 < len(command) and command[curr + 1] == ">":
+                        if current_str:
+                            tokenized_command.append(Token(TokenType.ARG, current_str))
+                            current_str = ""
+                        is_append = (curr + 2 < len(command)) and (command[curr + 2] == ">")
+                        advance = curr + 3 if is_append else curr + 2
+                        if is_append:
+                            tokenized_command.append(Token(TokenType.APPEND_OUT, "1>>"))
+                        else: 
+                            tokenized_command.append(Token(TokenType.REDIRECT_OUT, "1>"))
+                        curr = advance
+                    else:
+                        current_str += c
+                        curr += 1
+
+                case "2":
+                    if curr + 1 < len(command) and command[curr + 1] == ">":
+                        if current_str:
+                            tokenized_command.append(Token(TokenType.ARG, current_str))
+                            current_str = ""
+                        is_append = (curr + 2 < len(command)) and (command[curr + 2] == ">")
+                        advance = curr + 3 if is_append else curr + 2
+                        if is_append:
+                            tokenized_command.append(Token(TokenType.APPEND_ERR, "2>>"))
+                        else: 
+                            tokenized_command.append(Token(TokenType.REDIRECT_ERR, "2>"))
+                        curr = advance
+                    else:
+                        current_str += c  # Fixed: changed from string_arg to current_str
+                        curr += 1
+
+                case ">":
+                    if current_str:
+                        tokenized_command.append(Token(TokenType.ARG, current_str))
+                        current_str = ""
+                    is_append = (curr + 1 < len(command)) and (command[curr + 1] == ">")
+                    advance = curr + 2 if is_append else curr + 1  # Fixed: correctly advance past '>' or '>>'
+                    if is_append:
+                        tokenized_command.append(Token(TokenType.APPEND_OUT, ">>"))
+                    else: 
+                        tokenized_command.append(Token(TokenType.REDIRECT_OUT, ">"))
+                    curr = advance
+
+                case " ":
+                    if current_str:
+                        if "/" in current_str:
+                            tokenized_command.append(Token(TokenType.PATH, current_str))
+                        else:
+                            if not tokenized_command:
+                                tokenized_command.append(Token(TokenType.COMMAND, current_str))
+                            else:
+                                tokenized_command.append(Token(TokenType.ARG, current_str))
+                        current_str = ""  # Fixed: reset current_str instead of string_arg
+                    curr += 1
+
+                case _:
+                    current_str += c
+                    curr += 1
+                    
+        # Flush remaining word at the end of input line
+        if current_str:
+            if "/" in current_str:
+                tokenized_command.append(Token(TokenType.PATH, current_str))
+            else:
+                tokenized_command.append(Token(TokenType.COMMAND if not tokenized_command else TokenType.ARG, current_str))
+
+        return tokenized_command
 
     def main(self):
         files_trie = self.files_trie
         command_trie = self.command_trie
 
         while True:
+            self.remove_exited_jobs()
             self.COMP_LINE = self.read_command(command_trie, files_trie)
+            
+            #tokenized_command = self.parser()
+            #print(tokenized_command)
+            #for token in tokenized_command:
+                #print(token)
+            
+            
+            
             if not self.COMP_LINE:
                 continue
 
@@ -414,6 +570,7 @@ class Shell:
                     BuiltIn("complete", args.get("args"), extra=args.get("redirect")).run()
                 
                 case "jobs":
+                    
                     args = self.treatArgs(self.COMP_LINE[5:])
                     BuiltIn("jobs",args.get("args")).run()
 
@@ -432,16 +589,15 @@ class Shell:
                     is_Exe = self.isExecutable(command)
                     if is_Exe.get("is_Exe"):
                         res = self.treatArgs(args_part)
-                        job_id = self.next_bg_id
+                        
                         self.next_bg_id+=1
                         exec_item = Executable(
                             command,
                             res["args"],
                             is_Exe.get("full_path"),
-                            res.get("redirect") | {"job_id": job_id},
+                            res.get("redirect"),
                         )
-                        
-                                      
+                            
                         exec_item.run()
                         
                         
