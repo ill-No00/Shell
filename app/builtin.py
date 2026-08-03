@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 import re
 import json
-from job import jobs
+from .job import jobs
 
 
 
@@ -22,10 +22,10 @@ class BuiltIn:
         self.args = args
         self.extra = extra
         
-    def run(self):
+    def run(self,out = True):
         
-        redirect_out = self.extra.get("redirect_output")
-        redirect_err = self.extra.get("redirect_error")
+        redirect_out = self.extra.get("redirect_output", {})
+        redirect_err = self.extra.get("redirect_error" , {})
         is_background = self.args[-1] == "&" if len(self.args) > 0 else False
         
         if is_background:
@@ -38,7 +38,10 @@ class BuiltIn:
                 if redirect_out.get("is_redirect"):
                     self.redirectOut(text=" ".join(self.args),source=redirect_out)
                 else :
-                    print(" ".join(self.args))
+                    if out:
+                        print(" ".join(self.args))
+                    else:
+                        return " ".join(self.args)
                 
                 if redirect_err.get("is_redirect"):
                     self.redirectOut(source=redirect_err,text="")
@@ -50,7 +53,10 @@ class BuiltIn:
                     if redirect_out.get("is_redirect"):
                         self.redirectOut(redirect_out,f'{command} is a shell builtin')
                     else:
-                        print(f'{command} is a shell builtin',flush=True)
+                        if out:
+                            print(f'{command} is a shell builtin',flush=True)
+                        else:
+                            return f'{command} is a shell builtin'
                                 
                 else:
                     is_Exe = self.isExecutable(command)
@@ -58,15 +64,23 @@ class BuiltIn:
                         if redirect_out.get("is_redirect") :
                             self.redirectOut(redirect_out,f"{command} is {is_Exe.get('full_path')}")
                         else:
-                            print(f"{command} is {is_Exe.get('full_path')}" , flush=True)
+                            if out:
+                                print(f"{command} is {is_Exe.get('full_path')}" , flush=True)
+                            else:
+                                return f"{command} is {is_Exe.get('full_path')}"
                     else:
                         if redirect_err.get("is_redirect"):
                             self.redirectOut(redirect_err,f"{command}: not found")
                         else:
-                            
-                            print(f"{command}: not found" , flush=True)
+                            if out:
+                                print(f"{command}: not found" , flush=True)
+                            else:
+                                return f"{command}: not found"
             case "pwd":
-                print(str(Path.cwd()))
+                if out:
+                    print(str(Path.cwd()))
+                else:
+                    return str(Path.cwd())
                 
             case "cd":
                 if self.args[0].startswith("/"):
@@ -99,9 +113,16 @@ class BuiltIn:
                                 completion = self.REGISTERED_COMPLETIONS.get(flag_arg)
                                 #if flag_arg.get("path") == completion.get("path"):
                                 found = True
-                                print(f"complete -C '{completion.get('path')}' {flag_arg}")
+                                if out:
+                                    print(f"complete -C '{completion.get('path')}' {flag_arg}")
+                                else:
+                                    return f"complete -C '{completion.get('path')}' {flag_arg}"
                                     
-                            if not found : print(f"complete: {flag_arg}: no completion specification")
+                            if not found : 
+                                if out:
+                                    print(f"complete: {flag_arg}: no completion specification")
+                                else:
+                                    return f"complete: {flag_arg}: no completion specification"
                         case '-c' | '-C':
                             self.register_completion(flag_arg["command"],flag_arg["path"])
                         case '-r' | '-R':
@@ -119,11 +140,21 @@ class BuiltIn:
                         command = command[:-2]
                         jobs.delete_job(job.job_number)
                     if i== len(all_jobs) - 1:
-                        print(f"[{job.job_number}]+  {status:<24}{command}")
+                        if out:
+                            print(f"[{job.job_number}]+  {status:<24}{command}")
+                        else:
+                            f"[{job.job_number}]+  {status:<24}{command}"
                     elif i== len(all_jobs) - 2:
-                        print(f"[{job.job_number}]-  {status:<24}{command}")
+                        if out:
+                            
+                            print(f"[{job.job_number}]-  {status:<24}{command}")
+                        else:
+                            return f"[{job.job_number}]-  {status:<24}{command}"
                     else:
-                        print(f"[{job.job_number}]  {status:<24}{command}")
+                        if out:
+                            print(f"[{job.job_number}]  {status:<24}{command}")
+                        else:
+                            return f"[{job.job_number}]  {status:<24}{command}"
                     
                     
                 return

@@ -6,13 +6,14 @@ import termios
 import tty
 from pathlib import Path
 
-from builtin import BuiltIn
-from data_structure_alg.LongestCommonPrefix import longest_common_prefix
-from data_structure_alg.trie import Trie
-from executable import Executable
-from job import *
-from token_type import TokenType
-from token_t import Token
+from .builtin import BuiltIn
+from .data_structure_alg.LongestCommonPrefix import longest_common_prefix
+from .data_structure_alg.trie import Trie
+from .executable import Executable
+from .job import *
+from .token_type import TokenType
+from .token_t import Token
+from .pipe import Pipe
 
 
 class Shell:
@@ -402,128 +403,259 @@ class Shell:
                 else:
                     print(f"[{job.job_number}]  {status:<24}{command}")
                     
+
     def parser(self):
         tokenized_command = []
         command = self.COMP_LINE
+
         curr = 0
-        current_str = ""  # Fixed: Moved OUTSIDE the loop
-        
+        current_str = ""
+        is_piped = False
+        expecting_command = True
+
+        def add_word(word):
+            nonlocal expecting_command
+
+            if not word:
+                return
+
+            # Keep your PATH classification
+            if "/" in word:
+                token_type = TokenType.PATH
+            elif expecting_command:
+                token_type = TokenType.COMMAND
+            else:
+                token_type = TokenType.ARG
+
+            tokenized_command.append(Token(token_type, word))
+            expecting_command = False
+
+        def flush_current():
+            nonlocal current_str
+
+            if current_str:
+                add_word(current_str)
+                current_str = ""
+
         while curr < len(command):
             c = command[curr]
-            
+
             match c:
+                
                 case "|":
-                    if current_str:
-                        tokenized_command.append(Token(TokenType.COMMAND if not tokenized_command else TokenType.ARG, current_str))
-                        current_str = ""
-                        
-                    if curr - 1 > 0 and curr + 1 < len(command) and command[curr - 1] == " " and command[curr + 1] == " ":
-                        tokenized_command.append(Token(TokenType.PIPE, "|"))
+                    flush_current()
+
+                    tokenized_command.append(
+                        Token(TokenType.PIPE, "|")
+                    )
+
+                    is_piped = True
+                    expecting_command = True
+
+                    curr += 1
+                    continue
+                
+                case "\\":
+                    # Outside quotes: \ escapes the very next character literally
+                    if curr + 1 < len(command):
+                        current_str += command[curr + 1]
+                        curr += 2  # Move past both '\' and the escaped character
                     else:
-                        current_str += c
-                    curr += 1
-                        
-                case "'":
-                    if current_str:
-                        tokenized_command.append(Token(TokenType.ARG, current_str))
-                        current_str = ""
-                    curr += 1
-                    quoted = ""
-                    while curr < len(command) and command[curr] != "'":
-                        quoted += " " if command[curr] == "" else command[curr]
+                        current_str += "\\"
                         curr += 1
-                    curr += 1  # Skip closing quote
-                    tokenized_command.append(Token(TokenType.COMMAND if not tokenized_command else TokenType.ARG, quoted))
+                    continue
+                
+                case "'":
+                    
+                    curr += 1
+                    while curr < len(command) and command[curr] != "'":
+                        current_str += command[curr]
+                        curr += 1
+
+                    # Unterminated single quote
+                    if curr >= len(command):
+                        raise SyntaxError("unterminated single quote")
+
+                    # Skip closing quote
+                    curr += 1
+                    continue
+                
+                case "&":
+                    flush_current()
+                    tokenized_command.append(
+                        Token(TokenType.BACKGROUND, "&") 
+                    )
+                    curr += 1
+                    continue
 
                 case '"':
-                    if current_str:
-                        tokenized_command.append(Token(TokenType.ARG, current_str))
-                        current_str = ""
+                    
                     curr += 1
-                    quoted = ""
                     while curr < len(command) and command[curr] != '"':
                         if command[curr] == "\\":
-                            if curr + 1 < len(command) and command[curr + 1] in {'"', "\\"}:
+                            if curr + 1 < len(command) and command[curr + 1] in {'"', "\\", "$", "`"}:
+                                # Move to the escaped character
                                 curr += 1
-                                quoted += command[curr]
+                                current_str += command[curr]
+                            else:
+                                # Preserve backslash if not followed by a special character
+                                current_str += "\\"
                         else:
-                            quoted += command[curr]
+                            current_str += command[curr]
+
                         curr += 1
+
+                    if curr >= len(command):
+                        raise SyntaxError("unterminated double quote")
+
                     curr += 1  # Skip closing quote
-                    
-                    if quoted == "\\":
-                        tokenized_command.append(Token(TokenType.ARG, quoted))
-                    else: 
-                        tokenized_command.append(Token(TokenType.COMMAND if not tokenized_command else TokenType.ARG, quoted))
+                    continue
 
-                case "1":
-                    if curr + 1 < len(command) and command[curr + 1] == ">":
-                        if current_str:
-                            tokenized_command.append(Token(TokenType.ARG, current_str))
-                            current_str = ""
-                        is_append = (curr + 2 < len(command)) and (command[curr + 2] == ">")
-                        advance = curr + 3 if is_append else curr + 2
-                        if is_append:
-                            tokenized_command.append(Token(TokenType.APPEND_OUT, "1>>"))
-                        else: 
-                            tokenized_command.append(Token(TokenType.REDIRECT_OUT, "1>"))
-                        curr = advance
+                case "<":
+                    flush_current()
+
+                    # <<
+                    if curr + 1 < len(command) and command[curr + 1] == "<":
+                        tokenized_command.append(
+                            Token(TokenType.REDIRECT_IN, "<<")
+                        )
+                        curr += 2
+
+                    # <
                     else:
-                        current_str += c
+                        tokenized_command.append(
+                            Token(TokenType.REDIRECT_IN, "<")
+                        )
                         curr += 1
 
-                case "2":
+                    continue
+
+                case "1" | "2":
+                    fd = c
+
                     if curr + 1 < len(command) and command[curr + 1] == ">":
-                        if current_str:
-                            tokenized_command.append(Token(TokenType.ARG, current_str))
-                            current_str = ""
-                        is_append = (curr + 2 < len(command)) and (command[curr + 2] == ">")
-                        advance = curr + 3 if is_append else curr + 2
-                        if is_append:
-                            tokenized_command.append(Token(TokenType.APPEND_ERR, "2>>"))
-                        else: 
-                            tokenized_command.append(Token(TokenType.REDIRECT_ERR, "2>"))
-                        curr = advance
-                    else:
-                        current_str += c  # Fixed: changed from string_arg to current_str
-                        curr += 1
+
+                        flush_current()
+
+                        # 2>&1
+                        if (
+                            fd == "2"
+                            and curr + 3 < len(command)
+                            and command[curr + 2] == "&"
+                            and command[curr + 3] == "1"
+                        ):
+                            tokenized_command.append(
+                                Token(TokenType.REDIRECT_ERR_TO_OUT, "2>&1")
+                            )
+
+                            curr += 4
+                            continue
+
+                        # 1>>
+                        # 2>>
+                        if (
+                            curr + 2 < len(command)
+                            and command[curr + 2] == ">"
+                        ):
+                            if fd == "1":
+                                tokenized_command.append(
+                                    Token(TokenType.APPEND_OUT, "1>>")
+                                )
+                            else:
+                                tokenized_command.append(
+                                    Token(TokenType.APPEND_ERR, "2>>")
+                                )
+
+                            curr += 3
+                            continue
+
+                        # 1>
+                        # 2>
+                        if fd == "1":
+                            tokenized_command.append(
+                                Token(TokenType.REDIRECT_OUT, "1>")
+                            )
+                        else:
+                            tokenized_command.append(
+                                Token(TokenType.REDIRECT_ERR, "2>")
+                            )
+
+                        curr += 2
+                        continue
+
+                    # Normal argument containing 1 or 2
+                    current_str += c
+                    curr += 1
+                    continue
 
                 case ">":
-                    if current_str:
-                        tokenized_command.append(Token(TokenType.ARG, current_str))
-                        current_str = ""
-                    is_append = (curr + 1 < len(command)) and (command[curr + 1] == ">")
-                    advance = curr + 2 if is_append else curr + 1  # Fixed: correctly advance past '>' or '>>'
-                    if is_append:
-                        tokenized_command.append(Token(TokenType.APPEND_OUT, ">>"))
-                    else: 
-                        tokenized_command.append(Token(TokenType.REDIRECT_OUT, ">"))
-                    curr = advance
+                    flush_current()
+
+                    # >>
+                    if curr + 1 < len(command) and command[curr + 1] == ">":
+                        tokenized_command.append(
+                            Token(TokenType.APPEND_OUT, ">>")
+                        )
+                        curr += 2
+
+                    # >
+                    else:
+                        tokenized_command.append(
+                            Token(TokenType.REDIRECT_OUT, ">")
+                        )
+                        curr += 1
+
+                    continue
 
                 case " ":
-                    if current_str:
-                        if "/" in current_str:
-                            tokenized_command.append(Token(TokenType.PATH, current_str))
-                        else:
-                            if not tokenized_command:
-                                tokenized_command.append(Token(TokenType.COMMAND, current_str))
-                            else:
-                                tokenized_command.append(Token(TokenType.ARG, current_str))
-                        current_str = ""  # Fixed: reset current_str instead of string_arg
+                    flush_current()
                     curr += 1
-
+                    continue
+                
                 case _:
                     current_str += c
                     curr += 1
-                    
-        # Flush remaining word at the end of input line
-        if current_str:
-            if "/" in current_str:
-                tokenized_command.append(Token(TokenType.PATH, current_str))
-            else:
-                tokenized_command.append(Token(TokenType.COMMAND if not tokenized_command else TokenType.ARG, current_str))
 
-        return tokenized_command
+        flush_current()
+        return tokenized_command, is_piped
+
+    def parse_redirects(self,redirect_tokens):
+        """
+        Parses a list of redirect tokens into a structured dictionary for stdout/stderr.
+        Ex: [Token(REDIRECT_OUT, '>'), Token(ARG, 'out.txt')]
+        """
+        result = {
+            "redirect_output": {"is_redirect": False, "to": None, "append": False},
+            "redirect_error": {"is_redirect": False, "to": None, "append": False},
+        }
+
+        i = 0
+        while i < len(redirect_tokens):
+            token = redirect_tokens[i]
+            
+            # Check if the next token is the target file
+            if i + 1 < len(redirect_tokens):
+                target_file = redirect_tokens[i + 1].lexeme
+                
+                match token.lexeme:
+                    case ">" | "1>":
+                        result["redirect_output"] = {"is_redirect": True, "to": target_file, "append": False}
+                        i += 2
+                    case ">>" | "1>>":
+                        result["redirect_output"] = {"is_redirect": True, "to": target_file, "append": True}
+                        i += 2
+                    case "2>":
+                        result["redirect_error"] = {"is_redirect": True, "to": target_file, "append": False}
+                        i += 2
+                    case "2>>":
+                        result["redirect_error"] = {"is_redirect": True, "to": target_file, "append": True}
+                        i += 2
+                    case _:
+                        i += 1
+            else:
+                i += 1
+
+        return result
 
     def main(self):
         files_trie = self.files_trie
@@ -533,76 +665,98 @@ class Shell:
             self.remove_exited_jobs()
             self.COMP_LINE = self.read_command(command_trie, files_trie)
             
-            #tokenized_command = self.parser()
-            #print(tokenized_command)
-            #for token in tokenized_command:
-                #print(token)
-            
-            
-            
-            if not self.COMP_LINE:
+            # Handle empty line
+            if not self.COMP_LINE or not self.COMP_LINE.strip():
                 continue
 
-            start_with = self.COMP_LINE.split(" ")[0]
+            tokenized_command, is_piped = self.parser()
+            
+            if not tokenized_command:
+                continue
 
-            match start_with:
-                case "exit":
-                    break
+            if is_piped:
+                # Keep pipe execution as requested
+                pipe = Pipe(tokenized_command)
+                pipe.run()
+            else:
+                # 1. Find the primary command token
+                cmd_token = None
+                for token in tokenized_command:
+                    if token.type in (TokenType.COMMAND, TokenType.PATH):
+                        cmd_token = token
+                        break
 
-                case "echo":
-                    args = self.treatArgs(self.COMP_LINE[5:])
-                    BuiltIn("echo", args.get("args"), args.get("redirect")).run()
+                if not cmd_token:
+                    continue
 
-                case "type":
-                    args = self.treatArgs(self.COMP_LINE[5:])
-                    BuiltIn("type", args.get("args"), args.get("redirect")).run()
+                command_name = cmd_token.lexeme
 
-                case "pwd":
-                    args = self.treatArgs(self.COMP_LINE[4:])
-                    BuiltIn("pwd", extra=args.get("redirect")).run()
+                # 2. Extract arguments and redirection tokens in a single pass
+                cmd_index = tokenized_command.index(cmd_token)
+                remaining_tokens = tokenized_command[cmd_index + 1 :]
 
-                case "cd":
-                    args = self.treatArgs(self.COMP_LINE[3:])
-                    BuiltIn("cd", args.get("args")).run()
-
-                case "complete":
-                    args = self.treatArgs(self.COMP_LINE[9:])
-                    BuiltIn("complete", args.get("args"), extra=args.get("redirect")).run()
+                args_list = []
+                redirect_tokens = []
                 
-                case "jobs":
+               
+                
+                i = 0
+                while i < len(remaining_tokens):
+                    token = remaining_tokens[i]
+
+                    # If this token is a redirect operator, capture operator + target file
+                    if token.type not in (TokenType.ARG, TokenType.PATH, TokenType.COMMAND, TokenType.BACKGROUND):
+                        redirect_tokens.append(token)
+                        if i + 1 < len(remaining_tokens):
+                            redirect_tokens.append(remaining_tokens[i + 1])
+                            i += 1  # Skip filename token so it's NOT added to args_list
+                    else:
+                        args_list.append(token.lexeme)
+
+                    i += 1
+
+                parsed_args = {
+                    "args": args_list
+                }
+                
+                extra = self.parse_redirects(redirect_tokens)
+
+                # 3. Command Dispatching
+                match command_name:
+                    case "exit":
+                        break
+
+                    case "echo":
+                        BuiltIn("echo", parsed_args["args"], extra).run()
+
+                    case "type":
+                        BuiltIn("type", parsed_args["args"], extra).run()
+
+                    case "pwd":
+                        BuiltIn("pwd", extra=extra).run()
+
+                    case "cd":
+                        BuiltIn("cd", parsed_args["args"]).run()
+
+                    case "complete":
+                        BuiltIn("complete", parsed_args["args"], extra=extra).run()
                     
-                    args = self.treatArgs(self.COMP_LINE[5:])
-                    BuiltIn("jobs",args.get("args")).run()
+                    case "jobs":
+                        BuiltIn("jobs", parsed_args["args"]).run()
 
-                case _:
-                    first_blank = self.find_blank_ind()
-                    if first_blank != -1:
-                        cmd_part = self.COMP_LINE[:first_blank]
-                        args_part = self.COMP_LINE[first_blank + 1 :]
-                    else:
-                        cmd_part = self.COMP_LINE
-                        args_part = ""
-
-                    parsed_cmd = self.treatArgs(cmd_part)["args"]
-                    command = parsed_cmd[0] if parsed_cmd else cmd_part
-
-                    is_Exe = self.isExecutable(command)
-                    if is_Exe.get("is_Exe"):
-                        res = self.treatArgs(args_part)
-                        
-                        self.next_bg_id+=1
-                        exec_item = Executable(
-                            command,
-                            res["args"],
-                            is_Exe.get("full_path"),
-                            res.get("redirect"),
-                        )
-                            
-                        exec_item.run()
-                        
-                        
-                    else:
-                        print(f"{self.COMP_LINE}: command not found")
+                    case _:
+                        is_Exe = self.isExecutable(command_name)
+                        if is_Exe.get("is_Exe"):
+                            self.next_bg_id += 1
+                            exec_item = Executable(
+                                command_name,
+                                parsed_args["args"],
+                                is_Exe.get("full_path"),
+                                extra,
+                            )
+                            exec_item.run()
+                        else:
+                            print(f"{command_name}: command not found")
 
 
 if __name__ == "__main__":

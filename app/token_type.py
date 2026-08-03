@@ -18,3 +18,9 @@ class TokenType(Enum):
     ARG = auto()
     
     BACKSLASH = auto()
+    
+    REDIRECT_IN = auto()
+
+    REDIRECT_ERR_TO_OUT = auto()
+    
+    BACKGROUND = auto()
