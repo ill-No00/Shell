@@ -4,8 +4,10 @@ import sys
 from pathlib import Path
 import re
 import json
-from .job import jobs
-
+from job import jobs
+from history import history
+from variable import variables
+import re
 
 
 
@@ -13,7 +15,7 @@ from .job import jobs
 class BuiltIn:
     
     PATH = os.environ.get("PATH")
-    BUILT_IN_COMMANDS = {"echo","exit","type","pwd","complete","jobs"}
+    BUILT_IN_COMMANDS = {"echo","exit","type","pwd","complete","jobs" , "history", "declare"}
     REGISTERED_COMPLETIONS = {}
     
     
@@ -41,7 +43,7 @@ class BuiltIn:
                     if out:
                         print(" ".join(self.args))
                     else:
-                        return " ".join(self.args)
+                        return " ".join(self.args) + "\n"
                 
                 if redirect_err.get("is_redirect"):
                     self.redirectOut(source=redirect_err,text="")
@@ -56,7 +58,7 @@ class BuiltIn:
                         if out:
                             print(f'{command} is a shell builtin',flush=True)
                         else:
-                            return f'{command} is a shell builtin'
+                            return f'{command} is a shell builtin' + "\n"
                                 
                 else:
                     is_Exe = self.isExecutable(command)
@@ -67,7 +69,7 @@ class BuiltIn:
                             if out:
                                 print(f"{command} is {is_Exe.get('full_path')}" , flush=True)
                             else:
-                                return f"{command} is {is_Exe.get('full_path')}"
+                                return f"{command} is {is_Exe.get('full_path')}" + "\n"
                     else:
                         if redirect_err.get("is_redirect"):
                             self.redirectOut(redirect_err,f"{command}: not found")
@@ -75,12 +77,12 @@ class BuiltIn:
                             if out:
                                 print(f"{command}: not found" , flush=True)
                             else:
-                                return f"{command}: not found"
+                                return f"{command}: not found" + "\n"
             case "pwd":
                 if out:
                     print(str(Path.cwd()))
                 else:
-                    return str(Path.cwd())
+                    return str(Path.cwd()) + "\n"
                 
             case "cd":
                 if self.args[0].startswith("/"):
@@ -116,13 +118,13 @@ class BuiltIn:
                                 if out:
                                     print(f"complete -C '{completion.get('path')}' {flag_arg}")
                                 else:
-                                    return f"complete -C '{completion.get('path')}' {flag_arg}"
+                                    return f"complete -C '{completion.get('path')}' {flag_arg}" + "\n"
                                     
                             if not found : 
                                 if out:
                                     print(f"complete: {flag_arg}: no completion specification")
                                 else:
-                                    return f"complete: {flag_arg}: no completion specification"
+                                    return f"complete: {flag_arg}: no completion specification" + "\n"
                         case '-c' | '-C':
                             self.register_completion(flag_arg["command"],flag_arg["path"])
                         case '-r' | '-R':
@@ -143,23 +145,96 @@ class BuiltIn:
                         if out:
                             print(f"[{job.job_number}]+  {status:<24}{command}")
                         else:
-                            f"[{job.job_number}]+  {status:<24}{command}"
+                            return f"[{job.job_number}]+  {status:<24}{command}" + "\n"
                     elif i== len(all_jobs) - 2:
                         if out:
                             
                             print(f"[{job.job_number}]-  {status:<24}{command}")
                         else:
-                            return f"[{job.job_number}]-  {status:<24}{command}"
+                            return f"[{job.job_number}]-  {status:<24}{command}" + "\n"
                     else:
                         if out:
                             print(f"[{job.job_number}]  {status:<24}{command}")
                         else:
-                            return f"[{job.job_number}]  {status:<24}{command}"
+                            return f"[{job.job_number}]  {status:<24}{command}" + "\n"
                     
                     
                 return
+            case "history":
+                if len(self.args) > 0:
+                    if self.is_number(self.args[0]):
+                        history.list_history(int(self.args[0]))
+                    elif self.args[0].startswith('-'):
+                        flag = self.args[0]
+                        match flag:
+                            case "-r":
+                                history_file_path = self.args[1]
+                                history_file_data = None
+                                try:
+                                    with open(history_file_path,"r") as f:
+                                        history_file_data = f.read()
+                                    commands_from_history_file = history_file_data.split("\n")
+                                    for cmd in commands_from_history_file:
+                                        if len(cmd) > 0:
+                                            history.add(cmd)
+                        
+                                    
+                                except FileNotFoundError:
+                                    return
+                            case "-w":
+                                file_path = self.args[1]
+                                try:
+                                    with open(file_path,'w') as f:
+                                        f.write("\n".join(history.history) + "\n")
+                                        
+                                    return
+                                        
+                                except FileNotFoundError:
+                                    return
+                            case "-a":
+                                file_path = self.args[1]
+                                try:
+                                    
+                                    with open(file_path,"a") as f:
+                                        f.write("\n".join(history.history) + "\n")
+                                        history.history = []
+                                        
+                                except FileNotFoundError:
+                                    return
+                else:
+                    history.list_history()
+            
+            case "declare":
+                if len(self.args) > 0:
+                    if self.args[0].startswith('-'):
+                        flag = self.args[0]
+                        match flag:
                             
-                                
+                            case "-p": 
+                                var_name = self.args[1]
+                                if var_name not in variables.variables:
+                                    print(f"declare: {var_name}: not found")
+                                else:
+                                    print(f"declare -- {var_name}=\"{variables.variables[var_name]}\"")
+                    else:
+                        if "=" in self.args[0]:
+                            name,value = self.args[0].split("=")
+                            if self.validate_var_name(name):
+                                variables.variables[name] = value
+                            else:
+                                print(f"declare: `{self.args[0]}': not a valid identifier")
+                            
+    
+    def validate_var_name(self,var_name):
+        reg_ex = "^[a-zA-Z_][a-zA-Z0-9_]*$"
+        return re.match(reg_ex,var_name)    
+    
+    def is_number(self,num):
+        try:
+            float(num)
+            return True
+        except ValueError:
+            return False                    
     def register_completion(self,command, path):
     
         self.REGISTERED_COMPLETIONS[command] = {

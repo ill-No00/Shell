@@ -6,14 +6,16 @@ import termios
 import tty
 from pathlib import Path
 
-from .builtin import BuiltIn
-from .data_structure_alg.LongestCommonPrefix import longest_common_prefix
-from .data_structure_alg.trie import Trie
-from .executable import Executable
-from .job import *
-from .token_type import TokenType
-from .token_t import Token
-from .pipe import Pipe
+from builtin import BuiltIn
+from data_structure_alg.LongestCommonPrefix import longest_common_prefix
+from data_structure_alg.trie import Trie
+from executable import Executable
+from job import *
+from token_type import TokenType
+from token_t import Token
+from pipe import Pipe
+from history import history
+from variable import variables
 
 
 class Shell:
@@ -374,6 +376,16 @@ class Shell:
                         sys.stdout.write("\b \b")
                         sys.stdout.flush()
                     continue
+                
+                elif c == "\x1b":
+                    seq = sys.stdin.read(2)
+
+                    if seq == "[A":
+                        self.redraw_line(history.up_key())
+                    elif seq == "[B":
+                        self.redraw_line(history.down_key())
+
+                    continue
 
                 # printable key press
                 tab_count = 0
@@ -434,6 +446,7 @@ class Shell:
             nonlocal current_str
 
             if current_str:
+                
                 add_word(current_str)
                 current_str = ""
 
@@ -660,15 +673,20 @@ class Shell:
     def main(self):
         files_trie = self.files_trie
         command_trie = self.command_trie
+        history.initialize_on_startup(os.environ.get("HISTFILE"))
 
         while True:
             self.remove_exited_jobs()
             self.COMP_LINE = self.read_command(command_trie, files_trie)
             
+            
             # Handle empty line
             if not self.COMP_LINE or not self.COMP_LINE.strip():
                 continue
 
+            #adding the command to the history
+            history.add(self.COMP_LINE)
+            
             tokenized_command, is_piped = self.parser()
             
             if not tokenized_command:
@@ -676,6 +694,7 @@ class Shell:
 
             if is_piped:
                 # Keep pipe execution as requested
+                
                 pipe = Pipe(tokenized_command)
                 pipe.run()
             else:
@@ -711,7 +730,31 @@ class Shell:
                             redirect_tokens.append(remaining_tokens[i + 1])
                             i += 1  # Skip filename token so it's NOT added to args_list
                     else:
-                        args_list.append(token.lexeme)
+                        if "$" in token.lexeme:
+                            
+                            dollar_pos = token.lexeme.find("$")
+                            pre_dollar = token.lexeme[:dollar_pos]
+                            if dollar_pos + 1 < len(token.lexeme) and token.lexeme[dollar_pos+1] == "{":
+                                curr = dollar_pos + 2
+                                var_name=""
+                                while curr < len(token.lexeme) and token.lexeme[curr] != "}":
+                                    var_name+=token.lexeme[curr]
+                                    curr+=1
+                                if var_name in variables.variables:
+                                    
+                                    args_list.append(pre_dollar+variables.variables[var_name]+token.lexeme[curr+1:])
+                                else:
+                                    if pre_dollar or token.lexeme[curr+1:]:
+                                        args_list.append(pre_dollar+token.lexeme[curr+1:])
+                            else:    
+                                var_name = token.lexeme[dollar_pos+1:]
+                                if var_name in variables.variables:
+                                    args_list.append(token.lexeme[:dollar_pos] + variables.variables[var_name])
+                                else:
+                                    if token.lexeme[:dollar_pos]:
+                                        args_list.append(token.lexeme[:dollar_pos])
+                        else:        
+                            args_list.append(token.lexeme)
 
                     i += 1
 
@@ -724,6 +767,8 @@ class Shell:
                 # 3. Command Dispatching
                 match command_name:
                     case "exit":
+                        history.write_on_exit(os.environ.get("HISTFILE"))
+                        history.history = []
                         break
 
                     case "echo":
@@ -741,8 +786,14 @@ class Shell:
                     case "complete":
                         BuiltIn("complete", parsed_args["args"], extra=extra).run()
                     
+                    case "declare":
+                        BuiltIn("declare",parsed_args["args"]).run()
+                    
                     case "jobs":
                         BuiltIn("jobs", parsed_args["args"]).run()
+                    
+                    case "history":
+                        BuiltIn("history" , parsed_args["args"]).run()
 
                     case _:
                         is_Exe = self.isExecutable(command_name)

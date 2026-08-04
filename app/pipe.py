@@ -1,7 +1,7 @@
 import os
 import subprocess
-from .builtin import BuiltIn
-from .token_type import TokenType
+from builtin import BuiltIn
+from token_type import TokenType
 
 
 

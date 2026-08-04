@@ -1,6 +1,6 @@
 import subprocess
 import sys
-from .job import *
+from job import *
 
 
 class Executable:
